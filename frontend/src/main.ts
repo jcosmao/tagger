@@ -1908,6 +1908,7 @@ document.querySelector('.sidebar-tabs')!.addEventListener('click', async (e) => 
 artistListEl.addEventListener('click', async (e) => {
   const li = (e.target as HTMLElement).closest<HTMLElement>('.nav-item')
   if (!li) return
+  clearSearch()
 
   const artist = li.dataset.artist ?? null
   const album  = li.dataset.album  ?? null
@@ -1976,6 +1977,7 @@ genreListEl.addEventListener('click', async (e) => {
     return
   }
 
+  clearSearch()
   state.selectedGenre = li.dataset.all === '1' ? null : (li.dataset.genre ?? null)
   state.selectedIds.clear()
   state.page = 0
@@ -2001,6 +2003,7 @@ dirTreeEl.addEventListener('click', async (e) => {
     if (node) { await expandDirNode(node); return }
   }
 
+  clearSearch()
   state.selectedDirectory = path === '' ? null : path
   state.selectedIds.clear()
   state.page = 0
@@ -2021,6 +2024,7 @@ function findDirNode(path: string | null): DirNode | null {
 
 // Tag-link navigation
 async function navigateTo(artist: string, album?: string) {
+  clearSearch()
   state.sidebarMode     = 'tags'
   state.selectedArtist  = artist || null
   state.selectedAlbum   = album  || null
@@ -2212,6 +2216,7 @@ qualityListEl.addEventListener('click', async (e) => {
   const li = (e.target as HTMLElement).closest<HTMLElement>('.quality-issue-item')
   if (!li?.dataset.issue) return
   const issue = li.dataset.issue
+  clearSearch()
   state.selectedIssue = state.selectedIssue === issue ? null : issue
   qualityToolbar.hidden = !state.selectedIssue || state.selectedIssue === 'missing_files'
   const isDupes = state.selectedIssue === 'duplicate_tracks'
@@ -2241,6 +2246,13 @@ const debouncedSearch = debounce(async () => {
   await loadTracks()
   renderEditor()
 }, 300)
+
+// Picking something in the sidebar means "show me that": a leftover search
+// would otherwise keep overriding the list.
+function clearSearch() {
+  state.query = ''
+  searchEl.value = ''
+}
 
 searchEl.addEventListener('input', () => {
   state.query = searchEl.value.trim()
