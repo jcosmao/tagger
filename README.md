@@ -59,11 +59,18 @@ health-check, and backup notes.
 | Track list | Album grid | Tag editor |
 |:---:|:---:|:---:|
 | ![Track list](docs/tracks.png) | ![Album grid](docs/albums.png) | ![Tag editor](docs/editor.png) |
+| **Spectrogram** | **Quality panel** | **Bulk editing** |
+| ![Spectrogram](docs/spectrogram.png) | ![Quality panel](docs/quality.png) | ![Bulk editing](docs/bulk-edit.png) |
+
+The spectrogram above is a file tagged FLAC that was really re-encoded from a
+128 kbps MP3: the hard shelf at ~16 kHz gives it away, even though its bitrate
+column looks healthier than the genuine lossless tracks around it.
 
 ## Features
 
-- **Library** — scan into a searchable SQLite index; browse by artist/album,
-  folder, or data-quality issue; full-text search.
+- **Library** — scan into a searchable SQLite index, with exclude globs and an
+  optional auto-rescan interval; browse by artist/album, folder, or
+  data-quality issue; full-text search.
 - **Editing** — all common tags (incl. composer, BPM, lyrics, compilation),
   solo or in bulk; auto-number, find/replace, case normalization; embedded
   cover art (view / upload / fetch from the Cover Art Archive).
@@ -90,9 +97,10 @@ health-check, and backup notes.
 | `TAGGER_LOG_LEVEL`  | `INFO`     | Log verbosity                            |
 
 The AcoustID key and a Discogs token can also be set at runtime in **Settings**.
-Auth is off unless `TAGGER_PASSWORD` is set; ReplayGain uses `rsgain` (bundled
-in the image) or `loudgain` when present. Full details, including HTTPS setup,
-are in the [self-hosting guide](docs/SELF-HOSTING.md).
+Auth is off unless `TAGGER_PASSWORD` is set. ReplayGain uses `rsgain` (bundled
+in the image) or `loudgain` when present, and spectrograms need `ffmpeg` (also
+bundled); each feature hides itself when its tool is missing. Full details,
+including HTTPS setup, are in the [self-hosting guide](docs/SELF-HOSTING.md).
 
 ## Development
 

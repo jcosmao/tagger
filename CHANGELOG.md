@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Audio quality
+- Per-file **spectrogram** in the tag editor, rendered on demand by ffmpeg and
+  cached by track + mtime — a lossy transcode dressed up as lossless shows up
+  as a hard frequency shelf the codec and bitrate columns can't reveal.
+- Click the spectrogram to open it full size in a dismissible lightbox.
+
+### Metadata
+- MusicBrainz rate limiting (1 req/s) and retry-with-backoff.
+- Edition picker: list the releases a recording appears on and tag from the
+  one you actually own.
+- Lyrics and compilation tag fields, written per format.
+
+### Library & scanning
+- Scan-exclude glob patterns, and an opt-in auto-rescan interval.
+- Windowed album grid and lazy-loaded cover art, so large libraries stay
+  responsive.
+- Empty the trash from Settings.
+
+### UI
+- Drag-resizable sidebar and tag-editor panes; widths persist per browser and
+  reset on double-click.
+- Responsive layout for phones and tablets, visible focus outlines, and a
+  keyboard-shortcut help modal on `?`.
+- Per-file rename preview in the editor, and a context-aware empty state.
+
+### Operations & hardening
+- `GET /api/health` for liveness/version checks, exempt from auth.
+- Configurable `TAGGER_LOG_LEVEL`, structured scan-job logging, a JSON 500
+  handler, and OpenAPI docs at `/docs`.
+- Security: symlink-aware path containment, a cap on cover uploads, UUID
+  validation before Cover Art Archive fetches, and FTS query sanitizing.
+
 ## 0.2.0
 
 A large feature and hardening release building on the 0.1 proof of concept.

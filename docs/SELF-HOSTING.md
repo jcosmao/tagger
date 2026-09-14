@@ -87,10 +87,20 @@ index can always be rebuilt with a rescan, but settings and undo history can't.
 Deleted files are moved to `/config/trash` (recoverable via Undo) until you
 empty the trash from Settings.
 
-## ReplayGain
+## Optional external tools
 
-ReplayGain scanning needs `rsgain` (bundled in the image) or `loudgain` on the
-server's `PATH`. If it's unavailable the feature simply hides itself.
+Three features shell out to a binary and hide themselves when it isn't there,
+so a missing tool is never fatal — it just removes that feature:
+
+| Feature | Needs | In the image? |
+|---|---|---|
+| ReplayGain scanning | `rsgain` or `loudgain` | `rsgain`, yes |
+| Spectrograms | `ffmpeg` | yes |
+| AcoustID fingerprinting | `fpcalc` (chromaprint) + an API key | `fpcalc`, yes |
+
+Rendered spectrograms are cached under `/config/spectrograms`, keyed by track
+and file mtime, so a file is only rendered once until it changes. The cache is
+disposable — delete it any time to reclaim the space.
 
 ## Updating
 
