@@ -17,6 +17,7 @@ from typing import Callable
 
 from core.config import settings
 from core.database import get_conn
+from core.genres import sync_genre_separators
 from core.tagger import read_tags, is_audio_file, TAG_FIELDS
 
 _BATCH_SIZE = 200
@@ -79,6 +80,12 @@ def scan_library(
 
     conn = get_conn()
     try:
+        # Apply separator changes first: a removed separator clears mtimes,
+        # which the change detection below must see.
+        if genre_separators is not None:
+            sync_genre_separators(conn, genre_separators)
+            conn.commit()
+
         # Load existing mtimes for fast change detection
         existing: dict[str, float] = {
             row[0]: row[1]

@@ -219,3 +219,52 @@ def test_genre_separators_setting_roundtrip(client):
     assert client.get("/api/config").json()["genre_separators"] == [";"]
     client.patch("/api/config", json={"genre_separators": [";", "/"]})
     assert client.get("/api/config").json()["genre_separators"] == [";", "/"]
+
+
+# ─── Separator changes reach already-indexed files ────────────────────────────
+
+@pytest.fixture()
+def joined_library(temp_db, tmp_path, make_audio):
+    """One indexed FLAC whose file holds the legacy joined genre "Rock / Pop"."""
+    import mutagen
+    from core.scanner import scan_library
+
+    music = tmp_path / "music"
+    music.mkdir()
+    path = make_audio(".flac").rename(music / "a.flac")
+    f = mutagen.File(str(path), easy=True)
+    f["genre"] = ["Rock / Pop"]
+    f.save()
+    scan_library(music_dirs=[str(music)], genre_separators=[";"])
+    return music
+
+
+def _genre():
+    with db() as conn:
+        return conn.execute("SELECT genre FROM tracks").fetchone()["genre"]
+
+
+def test_rescan_applies_added_separator_to_unchanged_files(joined_library):
+    from core.scanner import scan_library
+
+    assert _genre() == "Rock / Pop"
+    scan_library(music_dirs=[str(joined_library)], genre_separators=[";", "/"])
+    assert _genre() == "Rock; Pop"
+
+
+def test_rescan_applies_removed_separator_to_unchanged_files(joined_library):
+    from core.scanner import scan_library
+
+    scan_library(music_dirs=[str(joined_library)], genre_separators=[";", "/"])
+    scan_library(music_dirs=[str(joined_library)], genre_separators=[";"])
+    assert _genre() == "Rock / Pop"
+
+
+def test_saving_separators_resplits_index_immediately(client, joined_library):
+    client.patch("/api/config", json={"genre_separators": [";", "/"]})
+    assert _genre() == "Rock; Pop"
+
+
+def test_separator_setting_splits_into_characters(client):
+    saved = client.patch("/api/config", json={"genre_separators": [";/,", " | "]}).json()
+    assert saved["genre_separators"] == [";", "/", ",", "|"]

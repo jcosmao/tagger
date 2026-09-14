@@ -86,7 +86,7 @@ export const APP_HTML = `
         </label>
         <label class="field-label">Genre separators
           <input id="setting-genre-separators" type="text" placeholder=";" />
-          <span class="settings-hint">Space-separated. A genre tag such as <code>Rock / Pop</code> is split on these when scanned. <code>;</code> always applies. Only new or modified files pick up a change on rescan.</span>
+          <span class="settings-hint">Each character is a separator — e.g. <code>;/,</code> splits <code>Rock / Pop</code> into two genres. <code>;</code> always applies. Adding one re-splits the library on save; removing one takes effect on the next scan.</span>
         </label>
       </div>
       <div class="settings-section">

@@ -2254,7 +2254,7 @@ async function openSettings() {
     acoustidKeyInput.value    = s.acoustid_api_key
     discogsTokenInput.value   = s.discogs_token ?? ''
     scanExcludeInput.value    = (s.scan_exclude ?? []).join('\n')
-    genreSeparatorsInput.value = (s.genre_separators ?? [';']).join(' ')
+    genreSeparatorsInput.value = (s.genre_separators ?? [';']).join('')
     autoScanInput.value       = String(s.auto_scan_minutes ?? 0)
     renameOnSaveInput.checked = s.rename_on_save
     renameTemplateInput.value = s.rename_template
@@ -2402,7 +2402,7 @@ document.getElementById('settings-save')!.addEventListener('click', async () => 
     music_dirs:        localMusicDirs,
     scan_exclude:      scanExcludeInput.value.split('\n').map(x => x.trim()).filter(Boolean),
     auto_scan_minutes: Math.max(0, parseInt(autoScanInput.value, 10) || 0),
-    genre_separators:  genreSeparatorsInput.value.split(/\s+/).filter(Boolean),
+    genre_separators:  [...new Set(genreSeparatorsInput.value.replace(/\s+/g, ''))],
   }
   try {
     const saved = await api.settings.update(update)

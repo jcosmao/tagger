@@ -140,6 +140,11 @@ def init_db() -> None:
                 error       TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS change_log (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts      REAL NOT NULL,

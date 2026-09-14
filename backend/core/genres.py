@@ -8,6 +8,7 @@ core.tagger.write_tags).
 """
 from __future__ import annotations
 
+import json
 from typing import Iterable
 
 SEP = "; "
@@ -58,3 +59,32 @@ def edit_genres(
     dropped = set(split_genres(list(remove)))
     genres = [g for g in genres if g not in dropped]
     return join_genres([*genres, *split_genres(list(add))])
+
+
+def sync_genre_separators(conn, separators: Iterable[str]) -> None:
+    """
+    Bring indexed genres in line with the configured separators.
+
+    The scanner skips files whose mtime hasn't changed, so a separator change
+    would otherwise never reach them. An added separator re-splits the stored
+    values in place (same result as re-reading the files); a removed one can't
+    be undone from the index, so mtimes are cleared and the next scan re-reads.
+    """
+    wanted = sorted({_CANONICAL, *(s for s in separators if s)})
+    row = conn.execute("SELECT value FROM meta WHERE key = 'genre_separators'").fetchone()
+    applied = json.loads(row[0]) if row else [_CANONICAL]
+    if wanted == applied:
+        return
+    if set(applied) - set(wanted):
+        conn.execute("UPDATE tracks SET mtime = NULL")
+    else:
+        changes = []
+        for tid, genre in conn.execute("SELECT id, genre FROM tracks WHERE genre != ''").fetchall():
+            new = join_genres(split_genres(genre, wanted))
+            if new != genre:
+                changes.append((new, tid))
+        conn.executemany("UPDATE tracks SET genre = ? WHERE id = ?", changes)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('genre_separators', ?)",
+        (json.dumps(wanted),),
+    )

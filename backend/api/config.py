@@ -4,9 +4,11 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core.config import settings
+from core.database import db
+from core.genres import sync_genre_separators
 from core.tagger import TAG_FIELDS
 
 router = APIRouter()
@@ -24,6 +26,12 @@ class AppSettings(BaseModel):
     scan_exclude: list[str] = []       # glob patterns; matching paths are skipped
     auto_scan_minutes: int = 0         # 0 = off; else rescan every N minutes
     genre_separators: list[str] = [";"]  # split legacy joined genres on scan
+
+    @field_validator("genre_separators")
+    @classmethod
+    def _one_char_separators(cls, v: list[str]) -> list[str]:
+        # Every non-space character is its own separator (";/," → ; / ,).
+        return list(dict.fromkeys(c for s in v for c in s if not c.isspace()))
 
 
 def get_music_dirs() -> list[str]:
@@ -64,6 +72,8 @@ def get_settings():
 def update_settings(update: AppSettings):
     merged = _load().model_copy(update=update.model_dump(exclude_none=True))
     _save(merged)
+    with db() as conn:
+        sync_genre_separators(conn, merged.genre_separators)
     return merged
 
 
