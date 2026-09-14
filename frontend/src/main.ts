@@ -88,6 +88,43 @@ function coverUrl(trackId: number): string {
   return `/api/covers/${trackId}${state.coverBust ? '?v=' + state.coverBust : ''}`
 }
 
+// In-page confirmation. Native confirm() can be silenced by the browser
+// ("prevent this page from creating additional dialogs"), after which it
+// returns false instantly and the action looks dead.
+function confirmModal(title: string, message: string, confirmLabel: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-overlay'
+    overlay.innerHTML = `
+      <form class="modal-card">
+        <div class="modal-title"></div>
+        <div class="modal-hint modal-message"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-cancel>Cancel</button>
+          <button type="submit" class="btn btn-danger"></button>
+        </div>
+      </form>
+    `
+    overlay.querySelector('.modal-title')!.textContent = title
+    overlay.querySelector('.modal-message')!.textContent = message
+    const ok = overlay.querySelector<HTMLButtonElement>('button[type=submit]')!
+    ok.textContent = confirmLabel
+
+    const done = (result: boolean) => {
+      overlay.remove()
+      document.removeEventListener('keydown', onKey, true)
+      resolve(result)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); done(false) } }
+    overlay.addEventListener('click', e => { if (e.target === overlay) done(false) })
+    overlay.querySelector('[data-cancel]')!.addEventListener('click', () => done(false))
+    overlay.querySelector('form')!.addEventListener('submit', e => { e.preventDefault(); done(true) })
+    document.addEventListener('keydown', onKey, true)
+    document.body.appendChild(overlay)
+    ok.focus()
+  })
+}
+
 function selectAll(): HTMLInputElement | null {
   return document.getElementById('select-all') as HTMLInputElement | null
 }
@@ -245,9 +282,10 @@ function showRenameGenre(oldName: string) {
 
 async function deleteGenre(name: string) {
   const n = genreCount(name)
-  const ok = confirm(
-    `Remove the genre “${name}” from ${n} track${n !== 1 ? 's' : ''}?\n\n` +
-    `Other genres on those tracks are kept. This can be undone.`
+  const ok = await confirmModal(
+    'Remove genre',
+    `Remove “${name}” from ${n} track${n !== 1 ? 's' : ''}? Other genres on those tracks are kept. This can be undone.`,
+    'Remove',
   )
   if (ok) await applyGenreRename(name, '')
 }
@@ -1510,9 +1548,11 @@ async function removeFromLibrary() {
 async function deleteFiles() {
   const ids = [...state.selectedIds]
   if (!ids.length) return
-  const ok = confirm(
-    `Move ${ids.length} file${ids.length !== 1 ? 's' : ''} to trash?\n\n` +
-    `The files leave your library folder but can be restored with Undo.`
+  const ok = await confirmModal(
+    'Delete files',
+    `Move ${ids.length} file${ids.length !== 1 ? 's' : ''} to trash? ` +
+    `The files leave your library folder but can be restored with Undo.`,
+    'Move to trash',
   )
   if (!ok) return
   deleteFilesBtn.disabled = true
@@ -2302,7 +2342,7 @@ async function refreshTrashStatus() {
 }
 
 emptyTrashBtn.addEventListener('click', async () => {
-  if (!confirm('Permanently delete all files in the trash? This cannot be undone.')) return
+  if (!await confirmModal('Empty trash', 'Permanently delete all files in the trash? This cannot be undone.', 'Delete forever')) return
   emptyTrashBtn.disabled = true
   try {
     const { removed, bytes } = await api.library.emptyTrash()
