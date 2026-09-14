@@ -1,4 +1,4 @@
-import { Track, Artist, Album, ScanJob, LookupResult, IssueCount } from './api'
+import { Track, Artist, Album, Genre, ScanJob, LookupResult, IssueCount } from './api'
 
 export const PAGE_SIZE = 100
 export const DEFAULT_COLS = ['quality', 'title', 'artist', 'album', 'year', 'track_number', 'format', 'duration']
@@ -33,15 +33,21 @@ export interface DirNode {
   expanded: boolean
 }
 
+export type SidebarMode = 'tags' | 'genres' | 'files' | 'quality'
+
 export interface State {
   // sidebar
-  sidebarMode:       'tags' | 'files' | 'quality'
+  sidebarMode:       SidebarMode
   // tags panel
   artists:           Artist[]
   albumsByArtist:    Map<string, Album[]>
   selectedArtist:    string | null
   selectedAlbum:     string | null
   expandedArtists:   Set<string>
+  // genres panel
+  genres:            Genre[]
+  selectedGenre:     string | null
+  genreFilter:       string
   // files panel
   rootNode:          DirNode | null
   selectedDirectory: string | null
@@ -86,6 +92,9 @@ export const state: State = {
   selectedArtist:    null,
   selectedAlbum:     null,
   expandedArtists:   new Set(),
+  genres:            [],
+  selectedGenre:     null,
+  genreFilter:       '',
   rootNode:          null,
   selectedDirectory: null,
   tracks:            [],

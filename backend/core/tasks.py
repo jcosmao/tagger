@@ -112,7 +112,7 @@ async def run_scan_job(job_id: str, directory: str | None = None) -> None:
     try:
         total, upserted = await asyncio.to_thread(
             scan_library, progress, app_settings.scan_tags, music_dirs,
-            prune_under, app_settings.scan_exclude,
+            prune_under, app_settings.scan_exclude, app_settings.genre_separators,
         )
         _update_job(
             job_id,

@@ -1,8 +1,8 @@
 import './style.css'
-import { api, Track, Artist, Album, LookupResult, AppSettings, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
-import { state, PAGE_SIZE, TAG_FIELDS, DirNode, saveColPrefs } from './state'
+import { state, PAGE_SIZE, TAG_FIELDS, DirNode, SidebarMode, saveColPrefs } from './state'
 import { COL_DEFS } from './columns'
 import {
   trackQuality, QUALITY_TITLES, QUALITY_ISSUES,
@@ -18,6 +18,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = APP_HTML
 
 const appEl          = document.querySelector<HTMLDivElement>('#app')!
 const artistListEl   = document.getElementById('artist-list')!
+const genreListEl    = document.getElementById('genre-list')!
+const genreFilterEl  = document.getElementById('genre-filter') as HTMLInputElement
+const genreOptionsEl = document.getElementById('genre-options')!
+const genreModeEl    = document.getElementById('genre-mode') as HTMLSelectElement
+const selectMatchingBtn = document.getElementById('select-matching-btn') as HTMLButtonElement
 const dirTreeEl      = document.getElementById('dir-tree')!
 const trackTheadRow  = document.getElementById('track-thead-row')!
 const trackTbody     = document.getElementById('track-tbody')!
@@ -94,6 +99,7 @@ function renderSidebarTabs() {
     btn.classList.toggle('active', btn.dataset.mode === state.sidebarMode)
   })
   document.getElementById('panel-tags')!.hidden    = state.sidebarMode !== 'tags'
+  document.getElementById('panel-genres')!.hidden  = state.sidebarMode !== 'genres'
   document.getElementById('panel-files')!.hidden   = state.sidebarMode !== 'files'
   document.getElementById('panel-quality')!.hidden = state.sidebarMode !== 'quality'
 }
@@ -139,6 +145,131 @@ function renderTagsPanel() {
         artistListEl.appendChild(albLi)
       }
     }
+  }
+}
+
+// ─── Genres panel ─────────────────────────────────────────────────────────────
+
+function renderGenresPanel() {
+  genreListEl.innerHTML = ''
+
+  const allLi = document.createElement('li')
+  allLi.className = 'nav-item nav-all' + (state.selectedGenre === null ? ' active' : '')
+  allLi.dataset.all = '1'
+  allLi.innerHTML = `<span class="nav-icon">♪</span><span class="nav-label">All tracks</span>`
+  genreListEl.appendChild(allLi)
+
+  const needle = state.genreFilter.trim().toLowerCase()
+  for (const g of state.genres) {
+    if (needle && !g.genre.toLowerCase().includes(needle)) continue
+    const li = document.createElement('li')
+    li.className = 'nav-item nav-genre' + (state.selectedGenre === g.genre ? ' active' : '')
+    li.dataset.genre = g.genre
+    // Tracks without a genre can be listed, but there's nothing to rename.
+    const actions = g.genre ? `
+      <span class="nav-actions">
+        <button class="nav-action" data-action="rename" title="Rename or merge this genre">✎</button>
+        <button class="nav-action" data-action="delete" title="Remove this genre from its tracks">✕</button>
+      </span>` : ''
+    li.innerHTML = `
+      <span class="nav-label">${esc(g.genre || '(No genre)')}</span>
+      ${actions}
+      <span class="nav-count">${g.track_count}</span>
+    `
+    genreListEl.appendChild(li)
+  }
+}
+
+function genreCount(name: string): number {
+  return state.genres.find(g => g.genre === name)?.track_count ?? 0
+}
+
+function splitGenres(value: string): string[] {
+  return [...new Set(value.split(';').map(g => g.trim()).filter(Boolean))]
+}
+
+function showRenameGenre(oldName: string) {
+  const count = genreCount(oldName)
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <form class="modal-card" id="rg-form">
+      <div class="modal-title">Rename genre</div>
+      <div class="modal-hint">“${esc(oldName)}” is on ${count} track${count !== 1 ? 's' : ''}.</div>
+      <label class="field-label">New name
+        <input id="rg-new" type="text" list="genre-options" autocomplete="off" />
+      </label>
+      <div class="modal-hint" id="rg-note"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="rg-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="rg-submit">Rename</button>
+      </div>
+    </form>
+  `
+  document.body.appendChild(overlay)
+  const close = () => overlay.remove()
+  overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+  overlay.querySelector('#rg-cancel')!.addEventListener('click', close)
+  const input  = overlay.querySelector<HTMLInputElement>('#rg-new')!
+  const note   = overlay.querySelector<HTMLElement>('#rg-note')!
+  const submit = overlay.querySelector<HTMLButtonElement>('#rg-submit')!
+  input.value = oldName
+  input.select()
+
+  const updateNote = () => {
+    const targets = splitGenres(input.value)
+    const merging = targets.filter(g => g !== oldName && genreCount(g) > 0)
+    if (!targets.length) {
+      note.textContent = 'Empty: the genre is removed from its tracks.'
+      submit.textContent = 'Remove'
+    } else if (merging.length) {
+      note.textContent = `Merges into ${merging.map(g => `“${g}” (${genreCount(g)})`).join(', ')}.`
+      submit.textContent = 'Merge'
+    } else {
+      note.textContent = targets.length > 1 ? `Splits into ${targets.length} genres.` : ''
+      submit.textContent = 'Rename'
+    }
+  }
+  input.addEventListener('input', updateNote)
+  updateNote()
+
+  overlay.querySelector<HTMLFormElement>('#rg-form')!.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const newName = splitGenres(input.value).join('; ')
+    if (newName === oldName) { close(); return }
+    submit.disabled = true
+    if (await applyGenreRename(oldName, newName)) close()
+    else submit.disabled = false
+  })
+}
+
+async function deleteGenre(name: string) {
+  const n = genreCount(name)
+  const ok = confirm(
+    `Remove the genre “${name}” from ${n} track${n !== 1 ? 's' : ''}?\n\n` +
+    `Other genres on those tracks are kept. This can be undone.`
+  )
+  if (ok) await applyGenreRename(name, '')
+}
+
+async function applyGenreRename(oldName: string, newName: string): Promise<boolean> {
+  try {
+    const { changed, errors } = await api.tags.renameGenre(oldName, newName)
+    const errNote = errors.length ? `, ${errors.length} failed` : ''
+    const plural = changed !== 1 ? 's' : ''
+    toast(newName
+      ? `Renamed “${oldName}” on ${changed} track${plural}${errNote}`
+      : `Removed “${oldName}” from ${changed} track${plural}${errNote}`,
+      errors.length ? 'error' : 'success')
+    if (state.selectedGenre === oldName) state.selectedGenre = splitGenres(newName)[0] ?? null
+    state.selectedIds.clear()
+    state.page = 0
+    await refreshAfterBulk()
+    renderEditor()
+    return true
+  } catch (e) {
+    toast(`Genre rename failed: ${e}`, 'error')
+    return false
   }
 }
 
@@ -498,9 +629,31 @@ function renderTracks() {
 function updateBulkBar() {
   const n = state.selectedIds.size
   bulkActions.hidden = n === 0
-  selectionCount.textContent = `${n} selected`
+  selectionCount.textContent = `${n.toLocaleString()} selected`
   removeTracksBtn.style.display = n > 0 ? '' : 'none'
   replaygainBtn.hidden = !(n > 0 && replaygainAvailable)
+
+  // Whole page selected but the view has more pages: offer to select them all.
+  // Format/quality filters only apply to the loaded page, so skip it then.
+  const pageSelected = state.tracks.length > 0 && state.tracks.every(t => state.selectedIds.has(t.id))
+  const canSelectMore = pageSelected && n < state.total && state.total > state.tracks.length
+    && !state.filterFormat && !state.filterQuality
+  selectMatchingBtn.hidden = !canSelectMore
+  if (canSelectMore) selectMatchingBtn.textContent = `Select all ${state.total.toLocaleString()} tracks`
+}
+
+async function selectAllMatching() {
+  selectMatchingBtn.disabled = true
+  try {
+    const ids = await api.library.trackIds(currentViewParams())
+    state.selectedIds = new Set(ids)
+    renderTracks()
+    renderEditor()
+  } catch (e) {
+    toast(`Selection failed: ${e}`, 'error')
+  } finally {
+    selectMatchingBtn.disabled = false
+  }
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
@@ -540,7 +693,8 @@ function renderEditor() {
   autoFixBtn.hidden = state.selectedIds.size === 0
   if (state.selectedIds.size !== 1) lookupPanel.hidden = true
   const sel = state.tracks.filter(t => state.selectedIds.has(t.id))
-  editorTitle.textContent = sel.length === 1 ? (sel[0].title || sel[0].filename) : `${sel.length} tracks`
+  const n = state.selectedIds.size
+  editorTitle.textContent = n === 1 && sel.length ? (sel[0].title || sel[0].filename) : `${n.toLocaleString()} tracks`
   populateForm(sel)
   updateCoverPreview()
   updatePlayer()
@@ -670,11 +824,14 @@ function updateCoverPreview() {
 const compilationCheckbox = () => tagForm.elements.namedItem('compilation') as HTMLInputElement
 
 function populateForm(tracks: Track[]) {
+  // Selected tracks off the loaded page have unknown values: show every field
+  // as mixed so saving only writes the fields the user actually fills in.
+  const partial = tracks.length < state.selectedIds.size
   for (const field of TAG_FIELDS) {
     const el = tagForm.elements.namedItem(field) as HTMLInputElement | HTMLTextAreaElement | null
     if (!el) continue
     const vals = tracks.map(t => (t[field as keyof Track] as string | null) ?? '')
-    const allSame = vals.every(v => v === vals[0])
+    const allSame = !partial && vals.every(v => v === vals[0])
     if (allSame) {
       el.value = vals[0]; el.placeholder = ''; delete (el as HTMLElement).dataset.mixed
     } else {
@@ -683,10 +840,29 @@ function populateForm(tracks: Track[]) {
   }
   // compilation: boolean checkbox; indeterminate = mixed across the selection.
   const comp = tracks.map(t => t.compilation === '1')
-  const compSame = comp.every(v => v === comp[0])
+  const compSame = !partial && comp.every(v => v === comp[0])
   const cb = compilationCheckbox()
   cb.indeterminate = !compSame
   cb.checked = compSame ? comp[0] : false
+
+  genreModeEl.hidden = state.selectedIds.size < 2
+  genreModeEl.value = 'replace'
+}
+
+function genreInput(): HTMLInputElement {
+  return tagForm.elements.namedItem('genre') as HTMLInputElement
+}
+
+function onGenreModeChange() {
+  if (genreModeEl.value === 'replace') {
+    populateForm(state.tracks.filter(t => state.selectedIds.has(t.id)))
+    return
+  }
+  const el = genreInput()
+  el.value = ''
+  delete el.dataset.mixed
+  el.placeholder = genreModeEl.value === 'add' ? 'Genres to add, separated by ;' : 'Genres to remove, separated by ;'
+  el.focus()
 }
 
 // ─── MusicBrainz lookup ───────────────────────────────────────────────────────
@@ -933,7 +1109,7 @@ async function applyProposals(proposals: FixProposal[]) {
   }
   toast(`Saved ${saved} track${saved !== 1 ? 's' : ''}`, 'success')
   state.qualityIssues = null
-  if (state.sidebarMode === 'tags') await loadLibrary()
+  await reloadNav()
   await loadTracks()
   if (state.sidebarMode === 'quality') await renderQualityPanel()
   const updated = state.tracks.filter(t => state.selectedIds.has(t.id))
@@ -1033,6 +1209,26 @@ async function loadLibrary() {
   }
 }
 
+async function loadGenres() {
+  try {
+    state.genres = await api.library.genres()
+    genreOptionsEl.innerHTML = state.genres
+      .filter(g => g.genre)
+      .map(g => `<option value="${esc(g.genre)}"></option>`)
+      .join('')
+    renderGenresPanel()
+  } catch (e) {
+    toast(`Failed to load genres: ${e}`, 'error')
+  }
+}
+
+// Reload the tag-derived sidebar lists after tags change. Genres always
+// reload: they also feed the editor's autocomplete.
+async function reloadNav() {
+  if (state.sidebarMode === 'tags') await loadLibrary()
+  await loadGenres()
+}
+
 async function loadTree() {
   try {
     const result = await api.fs.tree()
@@ -1087,6 +1283,10 @@ async function loadTracks() {
     } else if (state.sidebarMode === 'files') {
       const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
       if (state.selectedDirectory !== null) params.directory = state.selectedDirectory
+      result = await api.library.tracks(params)
+    } else if (state.sidebarMode === 'genres') {
+      const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
+      if (state.selectedGenre !== null) params.genre = state.selectedGenre
       result = await api.library.tracks(params)
     } else if (state.sidebarMode === 'quality') {
       if (!state.selectedIssue) {
@@ -1150,6 +1350,7 @@ function pollScan(jobId: string) {
           toast(`Scan complete — ${job.scanned} tracks indexed`, 'success')
           state.qualityIssues = null
           await loadLibrary()
+          await loadGenres()
           await loadTree()
           await loadTracks()
           if (state.sidebarMode === 'quality') await renderQualityPanel()
@@ -1191,14 +1392,24 @@ async function saveTags(e: Event) {
     if (r.mb_album_artist_id) update.mb_album_artist_id = r.mb_album_artist_id
   }
 
-  if (Object.keys(update).length === 0) { toast('No changes to save', 'info'); return }
-
+  // Multi-selection "Add"/"Remove" genre modes edit each track's own genre list.
   const ids = [...state.selectedIds]
+  const genreOps: GenreOps = {}
+  if (ids.length > 1 && genreModeEl.value !== 'replace') {
+    const names = splitGenres(update.genre ?? '')
+    delete update.genre
+    if (names.length) genreOps[genreModeEl.value === 'add' ? 'genre_add' : 'genre_remove'] = names
+  }
+
+  if (Object.keys(update).length === 0 && !Object.keys(genreOps).length) {
+    toast('No changes to save', 'info'); return
+  }
+
   try {
     if (ids.length === 1) {
       await api.tags.update(ids[0], update)
     } else {
-      await api.tags.bulk(ids, update)
+      await api.tags.bulk(ids, update, genreOps)
     }
 
     // Write cover art from Cover Art Archive if one was selected via lookup
@@ -1221,7 +1432,7 @@ async function saveTags(e: Event) {
     }
 
     state.qualityIssues = null
-    if (state.sidebarMode === 'tags') await loadLibrary()
+    await reloadNav()
     await loadTracks()
     const updated = state.tracks.filter(t => state.selectedIds.has(t.id))
     if (updated.length) populateForm(updated)
@@ -1259,7 +1470,7 @@ async function normalizeCaseBulk() {
     await Promise.all(tasks)
     toast(`Normalized case on ${changeCount} track${changeCount !== 1 ? 's' : ''}`, 'success')
     state.qualityIssues = null
-    if (state.sidebarMode === 'tags') await loadLibrary()
+    await reloadNav()
     await loadTracks()
     if (state.sidebarMode === 'quality') await renderQualityPanel()
     const updated = state.tracks.filter(t => state.selectedIds.has(t.id))
@@ -1333,7 +1544,7 @@ async function organizeFiles() {
       const errNote = errors.length ? `, ${errors.length} skipped` : ''
       toast(`Moved ${moved} file${moved !== 1 ? 's' : ''}${errNote}`, moved ? 'success' : 'error')
     }
-    if (state.sidebarMode === 'tags') await loadLibrary()
+    await reloadNav()
     if (state.sidebarMode === 'files') await loadTree()
     await loadTracks()
     renderEditor()
@@ -1349,7 +1560,7 @@ async function organizeFiles() {
 
 async function refreshAfterBulk() {
   state.qualityIssues = null
-  if (state.sidebarMode === 'tags') await loadLibrary()
+  await reloadNav()
   await loadTracks()
   if (state.sidebarMode === 'quality') await renderQualityPanel()
   const updated = state.tracks.filter(t => state.selectedIds.has(t.id))
@@ -1448,6 +1659,9 @@ function currentViewParams(): Record<string, string | number> {
   if (state.sidebarMode === 'files') {
     return state.selectedDirectory !== null ? { directory: state.selectedDirectory } : {}
   }
+  if (state.sidebarMode === 'genres') {
+    return state.selectedGenre !== null ? { genre: state.selectedGenre } : {}
+  }
   if (state.sidebarMode === 'quality') {
     return state.selectedIssue && state.selectedIssue !== 'missing_files'
       ? { issue: state.selectedIssue }
@@ -1514,7 +1728,7 @@ async function undoLast() {
     const res = await api.library.undo(Number(id))
     toast(`Undone — restored ${res.restored} track${res.restored !== 1 ? 's' : ''}`, 'success')
     state.qualityIssues = null
-    if (state.sidebarMode === 'tags') await loadLibrary()
+    await reloadNav()
     await loadTracks()
     if (state.sidebarMode === 'quality') await renderQualityPanel()
     renderEditor()
@@ -1620,12 +1834,14 @@ restorePaneWidths()
 document.querySelector('.sidebar-tabs')!.addEventListener('click', async (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.stab')
   if (!btn?.dataset.mode) return
-  const mode = btn.dataset.mode as 'tags' | 'files' | 'quality'
+  const mode = btn.dataset.mode as SidebarMode
   if (mode === state.sidebarMode) return
   state.sidebarMode = mode
   if (mode === 'tags') {
     state.selectedDirectory = null
     if (!state.artists.length) await loadLibrary()
+  } else if (mode === 'genres') {
+    await loadGenres()
   } else if (mode === 'files') {
     state.selectedArtist = null
     state.selectedAlbum  = null
@@ -1705,6 +1921,32 @@ document.getElementById('expand-all-btn')!.addEventListener('click', () => {
 document.getElementById('collapse-all-btn')!.addEventListener('click', () => {
   state.expandedArtists.clear()
   renderTagsPanel()
+})
+
+// Genres panel: genre clicks, rename/remove actions, filter
+genreListEl.addEventListener('click', async (e) => {
+  const target = e.target as HTMLElement
+  const li = target.closest<HTMLElement>('.nav-item')
+  if (!li) return
+
+  const action = target.closest<HTMLElement>('.nav-action')?.dataset.action
+  if (action && li.dataset.genre) {
+    if (action === 'rename') showRenameGenre(li.dataset.genre)
+    else await deleteGenre(li.dataset.genre)
+    return
+  }
+
+  state.selectedGenre = li.dataset.all === '1' ? null : (li.dataset.genre ?? null)
+  state.selectedIds.clear()
+  state.page = 0
+  renderGenresPanel()
+  await loadTracks()
+  renderEditor()
+})
+
+genreFilterEl.addEventListener('input', () => {
+  state.genreFilter = genreFilterEl.value
+  renderGenresPanel()
 })
 
 // Files panel: directory tree clicks
@@ -1857,6 +2099,8 @@ findReplaceBtn.addEventListener('click', showFindReplace)
 replaygainBtn.addEventListener('click', scanReplayGain)
 inferBtn.addEventListener('click', inferFromFilename)
 exportM3uBtn.addEventListener('click', exportM3u)
+selectMatchingBtn.addEventListener('click', selectAllMatching)
+genreModeEl.addEventListener('change', onGenreModeChange)
 undoBtn.addEventListener('click', undoLast)
 
 // Filter selects
@@ -1974,6 +2218,7 @@ const settingsModal     = document.getElementById('settings-sidebar')!
 const acoustidKeyInput  = document.getElementById('setting-acoustid-key') as HTMLInputElement
 const discogsTokenInput = document.getElementById('setting-discogs-token') as HTMLInputElement
 const scanExcludeInput  = document.getElementById('setting-scan-exclude') as HTMLTextAreaElement
+const genreSeparatorsInput = document.getElementById('setting-genre-separators') as HTMLInputElement
 const autoScanInput     = document.getElementById('setting-auto-scan') as HTMLInputElement
 const renameOnSaveInput = document.getElementById('setting-rename-on-save') as HTMLInputElement
 const renameTemplateInput = document.getElementById('setting-rename-template') as HTMLInputElement
@@ -2009,6 +2254,7 @@ async function openSettings() {
     acoustidKeyInput.value    = s.acoustid_api_key
     discogsTokenInput.value   = s.discogs_token ?? ''
     scanExcludeInput.value    = (s.scan_exclude ?? []).join('\n')
+    genreSeparatorsInput.value = (s.genre_separators ?? [';']).join(' ')
     autoScanInput.value       = String(s.auto_scan_minutes ?? 0)
     renameOnSaveInput.checked = s.rename_on_save
     renameTemplateInput.value = s.rename_template
@@ -2156,6 +2402,7 @@ document.getElementById('settings-save')!.addEventListener('click', async () => 
     music_dirs:        localMusicDirs,
     scan_exclude:      scanExcludeInput.value.split('\n').map(x => x.trim()).filter(Boolean),
     auto_scan_minutes: Math.max(0, parseInt(autoScanInput.value, 10) || 0),
+    genre_separators:  genreSeparatorsInput.value.split(/\s+/).filter(Boolean),
   }
   try {
     const saved = await api.settings.update(update)
@@ -2248,6 +2495,7 @@ async function startApp() {
   api.spectrogram.status().then(s => { spectrogramAvailable = s.available }).catch(() => {})
   await refreshUndoButton()
   await loadLibrary()
+  loadGenres()  // feeds the genre autocomplete in every mode
   await loadTracks()
 }
 

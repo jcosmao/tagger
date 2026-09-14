@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 
 from core.config import settings
 from core.database import db
+from core.genres import split_genres
 from core.history import log_change, snapshot, list_changes, undo_change
 
 router = APIRouter()
@@ -45,9 +46,17 @@ def _track_filters(
     artist: Optional[str],
     album: Optional[str],
     issue: Optional[str],
+    genre: Optional[str] = None,
 ) -> tuple[str, list, str]:
     """Build the shared WHERE clause + ORDER BY used by listing and export."""
     clauses, params = [], []
+    if genre is not None:
+        if genre == "":
+            clauses.append("(genre IS NULL OR genre = '')")
+        else:
+            # Genres are stored as "A; B"; pad both sides for an exact match.
+            clauses.append("instr('; ' || genre || '; ', ?) > 0")
+            params.append(f"; {genre}; ")
     if directory:
         clauses.append("(directory = ? OR substr(directory, 1, ?) = ?)")
         params.extend([directory, len(directory) + 1, directory + "/"])
@@ -226,10 +235,11 @@ def list_tracks(
     artist: Optional[str] = None,
     album: Optional[str] = None,
     issue: Optional[str] = None,
+    genre: Optional[str] = None,
     limit: int = Query(100, le=500),
     offset: int = 0,
 ):
-    where, params, order = _track_filters(directory, artist, album, issue)
+    where, params, order = _track_filters(directory, artist, album, issue, genre)
 
     with db() as conn:
         rows = conn.execute(
@@ -262,6 +272,7 @@ def export_m3u(
     artist: Optional[str] = None,
     album: Optional[str] = None,
     issue: Optional[str] = None,
+    genre: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(10000, le=100000),
 ):
@@ -278,7 +289,7 @@ def export_m3u(
                 (_fts_query(q), limit),
             ).fetchall()
         else:
-            where, params, order = _track_filters(directory, artist, album, issue)
+            where, params, order = _track_filters(directory, artist, album, issue, genre)
             rows = conn.execute(
                 f"SELECT * FROM tracks {where} {order} LIMIT ?", [*params, limit]
             ).fetchall()
@@ -338,6 +349,44 @@ def get_track(track_id: int):
     if not row:
         raise HTTPException(404, "Track not found")
     return _row(row)
+
+
+@router.get("/track-ids")
+def list_track_ids(
+    directory: Optional[str] = None,
+    artist: Optional[str] = None,
+    album: Optional[str] = None,
+    issue: Optional[str] = None,
+    genre: Optional[str] = None,
+    q: Optional[str] = None,
+):
+    """Every track id matching a view (same filters as /tracks, or a search)."""
+    with db() as conn:
+        if q:
+            rows = conn.execute(
+                "SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?", (_fts_query(q),)
+            ).fetchall()
+        else:
+            where, params, order = _track_filters(directory, artist, album, issue, genre)
+            rows = conn.execute(f"SELECT id FROM tracks {where} {order}", params).fetchall()
+    return [r[0] for r in rows]
+
+
+@router.get("/genres")
+def list_genres():
+    """Distinct genre values with track counts; "" counts tracks without one."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(genre, '') AS genre, COUNT(*) AS n FROM tracks GROUP BY 1"
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for r in rows:
+        for g in split_genres(r["genre"]) or [""]:
+            counts[g] = counts.get(g, 0) + r["n"]
+    return [
+        {"genre": g, "track_count": n}
+        for g, n in sorted(counts.items(), key=lambda kv: (kv[0].casefold(), kv[0]))
+    ]
 
 
 @router.get("/artists")

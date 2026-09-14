@@ -43,6 +43,7 @@ def scan_library(
     music_dirs: list[str] | None = None,
     prune_under: list[str] | None = None,
     exclude: list[str] | None = None,
+    genre_separators: list[str] | None = None,
 ) -> tuple[int, int]:
     """
     Scan the music directories and upsert changed/new tracks into the DB.
@@ -91,7 +92,8 @@ def scan_library(
 
                 if existing.get(fpath) != mtime:
                     want_extended = scan_tags is None or "lyrics" in scan_tags or "compilation" in scan_tags
-                    tags = read_tags(fpath, extended=want_extended)
+                    tags = read_tags(fpath, extended=want_extended,
+                                     genre_separators=genre_separators)
                     if scan_tags is not None:
                         for tag in TAG_FIELDS:
                             if tag not in scan_tags:

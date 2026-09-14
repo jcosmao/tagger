@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core.database import db
+from core.genres import edit_genres, normalize_genre
 from core.history import log_change, snapshot
 from core.tagger import write_tags, TAG_FIELDS
 from core.replaygain import rg_tool, scan as rg_scan
@@ -112,6 +113,13 @@ class TagUpdate(BaseModel):
 class BulkTagUpdate(BaseModel):
     track_ids: list[int]
     tags: TagUpdate
+    genre_add: list[str] = []      # merged into each track's own genres
+    genre_remove: list[str] = []
+
+
+class GenreRename(BaseModel):
+    old: str
+    new: str = ""                  # "" removes the genre; "A; B" expands it
 
 
 class ReplayGainRequest(BaseModel):
@@ -146,6 +154,8 @@ def update_track_tags(track_id: int, update: TagUpdate):
     updates = update.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(400, "No fields provided")
+    if "genre" in updates:
+        updates["genre"] = normalize_genre(updates["genre"])
 
     with db() as conn:
         row = conn.execute(
@@ -226,6 +236,8 @@ def find_replace(req: FindReplace):
             if not val or req.find not in val:
                 continue
             new_val = val.replace(req.find, req.replace)
+            if req.field == "genre":
+                new_val = normalize_genre(new_val)
             if new_val == val:
                 continue
             snap = snapshot(row)
@@ -290,11 +302,27 @@ def reorganize(req: Reorganize):
     return {"moved": moved, "errors": errors}
 
 
+def _write_track(conn, row, updates: dict) -> dict:
+    """Write `updates` to one track's file + row (renaming if enabled); returns its undo snapshot."""
+    snap = snapshot(row)
+    write_tags(row["path"], updates)
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(
+        f"UPDATE tracks SET {set_clause}, tagged_at = ? WHERE id = ?",
+        [*updates.values(), time.time(), row["id"]],
+    )
+    _apply_rename(conn, row["id"], row["path"], {**dict(row), **updates})
+    return snap
+
+
 @router.post("/bulk")
 def bulk_update_tags(update: BulkTagUpdate):
     updates = update.tags.model_dump(exclude_none=True)
-    if not updates:
+    genre_ops = bool(update.genre_add or update.genre_remove)
+    if not updates and not genre_ops:
         raise HTTPException(400, "No fields provided")
+    if "genre" in updates:
+        updates["genre"] = normalize_genre(updates["genre"])
 
     errors = []
     snaps: list[dict] = []
@@ -306,20 +334,50 @@ def bulk_update_tags(update: BulkTagUpdate):
             if not row:
                 errors.append({"id": track_id, "error": "not found"})
                 continue
+            track_updates = dict(updates)
+            if genre_ops:
+                base = updates.get("genre", row["genre"])
+                genre = edit_genres(base, add=update.genre_add, remove=update.genre_remove)
+                if genre != (row["genre"] or "") or "genre" in updates:
+                    track_updates["genre"] = genre
+            if not track_updates:
+                continue  # genre add/remove left this track unchanged
             try:
-                snap = snapshot(row)
-                write_tags(row["path"], updates)
-                set_clause = ", ".join(f"{k} = ?" for k in updates)
-                conn.execute(
-                    f"UPDATE tracks SET {set_clause}, tagged_at = ? WHERE id = ?",
-                    [*updates.values(), time.time(), track_id],
-                )
-                merged = {**dict(row), **updates}
-                _apply_rename(conn, track_id, row["path"], merged)
-                snaps.append(snap)
+                snaps.append(_write_track(conn, row, track_updates))
             except Exception as exc:
                 errors.append({"id": track_id, "error": str(exc)})
 
         log_change(conn, "tag_edit", f"Bulk edit — {len(snaps)} tracks", snaps)
 
     return {"ok": True, "errors": errors}
+
+
+@router.post("/genres/rename")
+def rename_genre(req: GenreRename):
+    """Rename, merge (target already exists) or delete a genre across the library."""
+    old = req.old.strip()
+    if not old:
+        raise HTTPException(400, "No genre to rename")
+
+    changed = 0
+    errors = []
+    snaps: list[dict] = []
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tracks WHERE instr('; ' || genre || '; ', ?) > 0", (f"; {old}; ",)
+        ).fetchall()
+        for row in rows:
+            genre = edit_genres(row["genre"], rename=(old, req.new))
+            if genre == row["genre"]:
+                continue
+            try:
+                snaps.append(_write_track(conn, row, {"genre": genre}))
+                changed += 1
+            except Exception as exc:
+                errors.append({"id": row["id"], "error": str(exc)})
+
+        target = normalize_genre(req.new)
+        action = f"Renamed genre '{old}' → '{target}'" if target else f"Removed genre '{old}'"
+        log_change(conn, "tag_edit", f"{action} — {changed} tracks", snaps)
+
+    return {"changed": changed, "errors": errors}

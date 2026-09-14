@@ -84,6 +84,10 @@ export const APP_HTML = `
           <input id="setting-auto-scan" type="number" min="0" step="1" />
           <span class="settings-hint">Automatically rescan the library on this interval. 0 disables it.</span>
         </label>
+        <label class="field-label">Genre separators
+          <input id="setting-genre-separators" type="text" placeholder=";" />
+          <span class="settings-hint">Space-separated. A genre tag such as <code>Rock / Pop</code> is split on these when scanned. <code>;</code> always applies. Only new or modified files pick up a change on rescan.</span>
+        </label>
       </div>
       <div class="settings-section">
         <div class="settings-section-title">File Renaming</div>
@@ -109,6 +113,7 @@ export const APP_HTML = `
     <aside class="sidebar">
       <div class="sidebar-tabs">
         <button class="stab active" data-mode="tags">Tags</button>
+        <button class="stab" data-mode="genres">Genres</button>
         <button class="stab" data-mode="files">Files</button>
         <button class="stab" data-mode="quality">Quality</button>
       </div>
@@ -118,6 +123,13 @@ export const APP_HTML = `
           <button id="collapse-all-btn" class="btn btn-ghost btn-sm">Collapse all</button>
         </div>
         <ul id="artist-list" class="nav-list"></ul>
+      </nav>
+      <nav id="panel-genres" class="sidebar-panel" hidden>
+        <div class="nav-toolbar">
+          <input id="genre-filter" class="nav-filter" type="search" placeholder="Filter genres…" autocomplete="off" />
+        </div>
+        <ul id="genre-list" class="nav-list"></ul>
+        <datalist id="genre-options"></datalist>
       </nav>
       <nav id="panel-files" class="sidebar-panel" hidden>
         <div class="nav-toolbar">
@@ -169,6 +181,7 @@ export const APP_HTML = `
       </div>
       <div id="bulk-actions" class="bulk-actions" hidden>
         <span id="selection-count" class="selection-count"></span>
+        <button id="select-matching-btn" class="btn btn-link btn-sm" hidden></button>
         <button id="normalize-case-btn" class="btn btn-ghost btn-sm">Normalize Case</button>
         <button id="autonumber-btn" class="btn btn-ghost btn-sm" title="Number selected tracks 1…N in filename order">Auto-number</button>
         <button id="find-replace-btn" class="btn btn-ghost btn-sm" title="Find and replace text in one tag across the selection">Find/Replace</button>
@@ -239,7 +252,16 @@ export const APP_HTML = `
         <label class="field-label">Year<input name="year" type="text" maxlength="4" /></label>
         <label class="field-label">Track #<input name="track_number" type="text" /></label>
         <label class="field-label">Disc #<input name="disc_number" type="text" /></label>
-        <label class="field-label">Genre<input name="genre" type="text" /></label>
+        <label class="field-label">
+          <span class="field-label-row">Genre
+            <select id="genre-mode" class="genre-mode" title="How to apply genres to the selection" hidden>
+              <option value="replace">Replace</option>
+              <option value="add">Add</option>
+              <option value="remove">Remove</option>
+            </select>
+          </span>
+          <input name="genre" type="text" list="genre-options" />
+        </label>
         <label class="field-label">Composer<input name="composer" type="text" /></label>
         <label class="field-label">BPM<input name="bpm" type="text" inputmode="numeric" /></label>
         <label class="field-check"><input name="compilation" type="checkbox" /><span>Part of a compilation</span></label>

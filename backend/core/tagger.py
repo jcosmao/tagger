@@ -13,6 +13,8 @@ import mutagen
 from mutagen.easyid3 import EasyID3
 from mutagen.easymp4 import EasyMP4
 
+from core.genres import join_genres, split_genres
+
 # EasyMP4 doesn't register composer/bpm by default — add them so the MP4/M4A
 # path handles the same field set as ID3 and Vorbis.
 for _key, _atom in (("composer", "\xa9wrt"),):
@@ -70,12 +72,16 @@ def _first(val: Any) -> str | None:
     return str(val)
 
 
-def read_tags(path: str | Path, extended: bool = True) -> dict:
+def read_tags(
+    path: str | Path, extended: bool = True, genre_separators: list[str] | None = None,
+) -> dict:
     """
     Return normalised tag fields + duration/format for an audio file.
 
     `extended` reads lyrics/compilation via a second (per-format) open; callers
     that don't need them (e.g. a scan with those tags disabled) can skip it.
+    Every genre value is kept, also split on `genre_separators` (legacy joined
+    strings such as "Rock / Pop"), and returned as "Rock; Pop".
     """
     f = mutagen.File(str(path), easy=True)
     if f is None:
@@ -83,6 +89,8 @@ def read_tags(path: str | Path, extended: bool = True) -> dict:
 
     tags = f.tags or {}
     result: dict = {internal: _first(tags.get(easy)) for easy, internal in _FROM_EASY.items()}
+    genres = split_genres(tags.get("genre"), genre_separators or ())
+    result["genre"] = join_genres(genres) if genres else None
     if extended:
         result.update(_read_extended(str(path)))
     else:
@@ -122,6 +130,8 @@ def write_tags(path: str | Path, updates: dict) -> None:
         if val is None or val == "":
             if easy_key in f.tags:
                 del f.tags[easy_key]
+        elif internal_key == "genre":
+            f.tags[easy_key] = split_genres(str(val)) or [str(val)]
         else:
             f.tags[easy_key] = [str(val)]
 

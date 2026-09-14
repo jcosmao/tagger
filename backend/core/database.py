@@ -44,6 +44,20 @@ def _migrate(conn) -> None:
         if col not in have:
             conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} {decl}")
 
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version < 1:
+        # Genres became multi-valued: store them as "Rock; Pop", and clear
+        # mtimes so the next scan re-reads the extra values older scans dropped.
+        from core.genres import normalize_genre
+
+        rows = conn.execute("SELECT id, genre FROM tracks WHERE genre IS NOT NULL").fetchall()
+        conn.executemany(
+            "UPDATE tracks SET genre = ? WHERE id = ?",
+            [(normalize_genre(r["genre"]), r["id"]) for r in rows],
+        )
+        conn.execute("UPDATE tracks SET mtime = NULL")
+        conn.execute("PRAGMA user_version = 1")
+
 
 def init_db() -> None:
     with db() as conn:

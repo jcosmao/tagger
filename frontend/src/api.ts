@@ -43,6 +43,16 @@ export interface Artist {
   track_count: number
 }
 
+export interface Genre {
+  genre: string        // "" = tracks without a genre
+  track_count: number
+}
+
+export interface GenreOps {
+  genre_add?: string[]
+  genre_remove?: string[]
+}
+
 export interface Album {
   album: string
   artist: string | null
@@ -60,6 +70,7 @@ export interface AppSettings {
   music_dirs: string[]
   scan_exclude: string[]
   auto_scan_minutes: number
+  genre_separators: string[]
   default_music_dir?: string
 }
 
@@ -191,6 +202,11 @@ export const api = {
     removeTracks: (ids: number[]) => request<{ removed: number }>('POST', '/api/library/remove', ids),
     deleteFiles: (ids: number[]) => request<{ deleted: number }>('POST', '/api/library/delete-files', ids),
     artists: () => request<Artist[]>('GET', '/api/library/artists'),
+    genres: () => request<Genre[]>('GET', '/api/library/genres'),
+    trackIds: (params: Record<string, string | number> = {}) => {
+      const qs = new URLSearchParams(params as Record<string, string>).toString()
+      return request<number[]>('GET', `/api/library/track-ids${qs ? '?' + qs : ''}`)
+    },
     albums: (artist?: string) =>
       request<Album[]>('GET', `/api/library/albums${artist ? '?artist=' + encodeURIComponent(artist) : ''}`),
     exportM3uUrl: (params: Record<string, string | number> = {}) => {
@@ -207,8 +223,10 @@ export const api = {
   tags: {
     update: (trackId: number, tags: TagUpdate) =>
       request<{ ok: boolean }>('PATCH', `/api/tags/${trackId}`, tags),
-    bulk: (trackIds: number[], tags: TagUpdate) =>
-      request<{ ok: boolean; errors: unknown[] }>('POST', '/api/tags/bulk', { track_ids: trackIds, tags }),
+    bulk: (trackIds: number[], tags: TagUpdate, genreOps: GenreOps = {}) =>
+      request<{ ok: boolean; errors: unknown[] }>('POST', '/api/tags/bulk', { track_ids: trackIds, tags, ...genreOps }),
+    renameGenre: (oldName: string, newName: string) =>
+      request<{ changed: number; errors: unknown[] }>('POST', '/api/tags/genres/rename', { old: oldName, new: newName }),
     replaygain: (trackIds: number[], albumMode = false) =>
       request<{ ok: boolean; tool: string | null; processed: number; error?: string }>(
         'POST', '/api/tags/replaygain', { track_ids: trackIds, album_mode: albumMode }),

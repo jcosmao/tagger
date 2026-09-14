@@ -23,6 +23,7 @@ class AppSettings(BaseModel):
     music_dirs: list[str] = []
     scan_exclude: list[str] = []       # glob patterns; matching paths are skipped
     auto_scan_minutes: int = 0         # 0 = off; else rescan every N minutes
+    genre_separators: list[str] = [";"]  # split legacy joined genres on scan
 
 
 def get_music_dirs() -> list[str]:

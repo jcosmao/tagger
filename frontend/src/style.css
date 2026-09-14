@@ -146,13 +146,14 @@ body.resizing-pane, body.resizing-pane * { cursor: col-resize !important; user-s
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   font-family: var(--font);
   padding: 8px 0;
+  min-width: 0;
   cursor: pointer;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.03em;
   transition: color 0.15s, border-color 0.15s;
   margin-bottom: -1px;
 }
@@ -214,6 +215,52 @@ body.resizing-pane, body.resizing-pane * { cursor: col-resize !important; user-s
   flex-shrink: 0;
 }
 .nav-item.active .nav-count { color: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+/* ─── Genres panel ──────────────────────────────────────────────────────────── */
+
+.nav-filter {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font);
+  padding: 4px 8px;
+  outline: none;
+}
+.nav-filter:focus { border-color: var(--accent); }
+
+.nav-genre { font-size: 13px; }
+.nav-genre.active .nav-label { color: var(--accent); }
+
+/* Rename/remove buttons appear on hover (always on touch screens). */
+.nav-actions { display: none; gap: 2px; flex-shrink: 0; }
+.nav-item:hover .nav-actions,
+.nav-item:focus-within .nav-actions { display: flex; }
+@media (hover: none) { .nav-actions { display: flex; } }
+.nav-action {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 5px;
+}
+.nav-action:hover { background: var(--surface3, var(--border)); color: var(--text); }
+
+.btn-link { background: transparent; border: none; color: var(--accent); padding-left: 2px; padding-right: 2px; }
+.btn-link:hover:not(:disabled) { text-decoration: underline; }
+.btn-link[hidden] { display: none; }
+
+.field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.genre-mode { text-transform: none; letter-spacing: normal; font-weight: 400; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 11px; font-family: var(--font); padding: 1px 4px; }
+.genre-mode[hidden] { display: none; }
+.modal-hint { font-size: 12px; color: var(--text-muted); }
+.modal-hint:empty { display: none; }
 
 /* ─── Directory tree ────────────────────────────────────────────────────────── */
 

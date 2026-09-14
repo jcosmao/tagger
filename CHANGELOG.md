@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Genres
+- **Genres** sidebar tab: every genre with its track count, a filter box, and
+  one click to list its tracks (also exportable as `.m3u`).
+- Multi-valued genres: all values in a file are read, legacy joined strings
+  are split on configurable separators, and writes use native multi-value
+  tags (Vorbis/FLAC, ID3v2.4, MP4). The next scan re-reads every file once.
+- Rename, merge, or remove a genre across the whole library — undoable.
+- Bulk editor genre modes: replace the list, or add/remove genres while
+  keeping each track's others.
+- "Select all N tracks" extends a full-page selection to the whole view, so
+  bulk edits reach every page.
+
 ### Audio quality
 - Per-file **spectrogram** in the tag editor, rendered on demand by ffmpeg and
   cached by track + mtime — a lossy transcode dressed up as lossless shows up
