@@ -1,5 +1,5 @@
 import './style.css'
-import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistDetail, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
 import { state, PAGE_SIZE, TAG_FIELDS, DirNode, SidebarMode, saveColPrefs } from './state'
@@ -245,68 +245,113 @@ async function loadArtists() {
   }
 }
 
+// The artist the genre panel is about: the one selected in the Artist tab
+// (artist tag) or the Album Artist tab (album artist, else artist).
+function genreArtist(): { name: string; by: ArtistGrouping } | null {
+  if (state.query) return null
+  if (state.sidebarMode === 'artists' && state.selectedArtistKey) return { name: state.selectedArtistKey, by: 'album_artist' }
+  if (state.sidebarMode === 'tags' && state.selectedArtist) return { name: state.selectedArtist, by: 'artist' }
+  return null
+}
+
+const sameArtist = (a: { name: string; by: ArtistGrouping } | null, b: { name: string; by: ArtistGrouping } | null) =>
+  !!a && !!b && a.name === b.name && a.by === b.by
+
+let artistDetailFor: { name: string; by: ArtistGrouping } | null = null
+
 async function loadArtistDetail() {
-  const key = state.selectedArtistKey
-  state.artistDetail = null
+  const target = genreArtist()
+  if (!sameArtist(target, artistDetailFor)) state.artistDetail = null
   renderArtistGenres()
-  if (key === null) return
+  if (!target) return
   try {
-    const detail = await api.artists.detail(key)
-    if (state.selectedArtistKey === key) { state.artistDetail = detail; renderArtistGenres() }
+    const detail = await api.artists.detail(target.name, target.by)
+    if (sameArtist(genreArtist(), target)) {
+      state.artistDetail = detail
+      artistDetailFor = target
+      renderArtistGenres()
+    }
   } catch (e) {
     toast(`Failed to load artist: ${e}`, 'error')
   }
 }
 
+// Genres picked for the next Replace/Add: MusicBrainz suggestions plus custom
+// ones typed in, kept while the same artist stays selected.
+let agPicks: { key: string; custom: string[]; checked: Set<string> | null } = { key: '', custom: [], checked: null }
+
 function renderArtistGenres() {
-  const d = state.artistDetail
-  artistGenresEl.hidden = state.sidebarMode !== 'artists' || state.selectedArtistKey === null || !!state.query
-  if (artistGenresEl.hidden) return
+  const target = genreArtist()
+  const d = sameArtist(target, artistDetailFor) ? state.artistDetail : null
+  artistGenresEl.hidden = !target
+  if (!target) return
   if (!d) { artistGenresEl.innerHTML = '<div class="ag-muted">Loading…</div>'; return }
+
+  const key = `${target.by}|${target.name}`
+  if (agPicks.key !== key) agPicks = { key, custom: [], checked: null }
 
   const plural = (n: number) => `${n.toLocaleString()} track${n !== 1 ? 's' : ''}`
   const current = d.current_genres.length
-    ? d.current_genres.map(g => `<span class="ag-chip">${esc(g.genre)} <b>×${g.track_count}</b></span>`).join('')
+    ? d.current_genres.map(g => `
+        <span class="ag-chip">${esc(g.genre)} <b title="${plural(g.track_count)}">${g.track_count}</b>
+        <button class="ag-x" data-ag="remove" data-genre="${esc(g.genre)}" title="Remove “${esc(g.genre)}” from ${plural(g.track_count)}">✕</button></span>`).join('')
     : '<span class="ag-muted">none</span>'
 
-  let mbRow: string
+  let mbStatus: string
   const mb = d.mb
+  const suggestions = mb?.mbid && !mb.error ? mb.genres : []
   if (!mb) {
-    mbRow = `<span class="ag-muted">Not fetched yet.</span>`
+    mbStatus = `<span class="ag-muted">Not fetched yet.</span>`
   } else if (mb.error) {
-    mbRow = `<span class="ag-error">MusicBrainz error: ${esc(mb.error)}</span>`
+    mbStatus = `<span class="ag-error">MusicBrainz error: ${esc(mb.error)}</span>`
   } else if (!mb.mbid) {
-    mbRow = `<span class="ag-muted">No matching artist on MusicBrainz.</span>`
+    mbStatus = `<span class="ag-muted">No matching artist on MusicBrainz.</span>`
   } else {
     const label = (c: { name: string | null; disambiguation: string | null }) =>
       esc(c.name ?? '') + (c.disambiguation ? ` (${esc(c.disambiguation)})` : '')
-    const match = mb.candidates.length > 1
+    mbStatus = mb.candidates.length > 1
       ? `<select class="ag-candidates" title="Pick the right artist">${mb.candidates.map(c =>
           `<option value="${esc(c.id)}"${c.id === mb.mbid ? ' selected' : ''}>${label(c)}</option>`).join('')}</select>`
       : `<a href="https://musicbrainz.org/artist/${esc(mb.mbid)}" target="_blank" rel="noopener">${label({ name: mb.mb_name, disambiguation: mb.disambiguation })}</a>`
-    const top = mb.genres[0]?.count ?? 0
-    const chips = mb.genres.length
-      ? mb.genres.map(g => `
-          <label class="ag-chip ag-pick"><input type="checkbox" value="${esc(g.label)}"${g.count * 2 >= top ? ' checked' : ''} />
-          ${esc(g.label)} <b>${g.count}</b></label>`).join('')
-      : '<span class="ag-muted">This artist has no genres on MusicBrainz.</span>'
-    mbRow = `${match}<div class="ag-chips">${chips}</div>`
+    if (!suggestions.length) mbStatus += ' <span class="ag-muted">— no genres on MusicBrainz.</span>'
   }
+
+  // First render for this artist: pre-check suggestions with at least half the top votes.
+  if (!agPicks.checked) {
+    const top = suggestions[0]?.count ?? 0
+    agPicks.checked = new Set(suggestions.filter(g => g.count * 2 >= top).map(g => g.label))
+  }
+  const picks = [
+    ...suggestions.map(g => `
+      <label class="ag-chip ag-pick"><input type="checkbox" value="${esc(g.label)}"${agPicks.checked!.has(g.label) ? ' checked' : ''} />
+      ${esc(g.label)} <b title="MusicBrainz votes">${g.count}</b></label>`),
+    ...agPicks.custom.map(c => `
+      <label class="ag-chip ag-pick ag-custom-chip"><input type="checkbox" value="${esc(c)}"${agPicks.checked!.has(c) ? ' checked' : ''} />
+      ${esc(c)} <button class="ag-x" data-ag="drop-custom" data-genre="${esc(c)}" title="Drop this custom genre">✕</button></label>`),
+  ].join('')
 
   artistGenresEl.innerHTML = `
     <div class="ag-head">
       <span class="ag-title">${esc(d.artist || '(Unknown artist)')}</span>
       <span class="ag-muted">${plural(d.track_count)}</span>
-      <button class="btn btn-ghost btn-sm" data-ag="fetch">${mb ? 'Refresh' : 'Fetch genres'}</button>
+      <button class="btn btn-ghost btn-sm" data-ag="fetch">${mb ? 'Refresh MusicBrainz' : 'Fetch MusicBrainz genres'}</button>
     </div>
     <div class="ag-row"><span class="ag-label">On tracks</span><div class="ag-chips">${current}</div></div>
-    <div class="ag-row"><span class="ag-label">MusicBrainz</span><div class="ag-mb">${mbRow}</div></div>
-    ${mb?.genres.length ? `
+    <div class="ag-row"><span class="ag-label">MusicBrainz</span><div class="ag-mb">${mbStatus}</div></div>
+    <div class="ag-row"><span class="ag-label">New genres</span>
+      <div class="ag-chips">
+        ${picks}
+        <form class="ag-add-form">
+          <input class="ag-custom" type="text" list="genre-options" placeholder="Add a genre…" autocomplete="off" />
+          <button type="submit" class="btn btn-ghost btn-sm">Add</button>
+        </form>
+      </div>
+    </div>
     <div class="ag-actions">
       <button class="btn btn-primary btn-sm" data-ag="replace">Replace genres on ${plural(d.track_count)}</button>
       <button class="btn btn-ghost btn-sm" data-ag="add">Add to ${plural(d.track_count)}</button>
       <span class="ag-muted" data-ag-count></span>
-    </div>` : ''}
+    </div>
   `
   updatePickedCount()
 }
@@ -318,21 +363,61 @@ function pickedGenres(): string[] {
 function updatePickedCount() {
   const picked = pickedGenres()
   const count = artistGenresEl.querySelector('[data-ag-count]')
-  if (count) count.textContent = picked.length ? picked.join('; ') : 'Pick at least one genre'
+  if (count) count.textContent = picked.length ? picked.join('; ') : 'Pick or add at least one genre'
   artistGenresEl.querySelectorAll<HTMLButtonElement>('[data-ag="replace"], [data-ag="add"]')
     .forEach(b => { b.disabled = !picked.length })
 }
 
+function addCustomGenres(value: string) {
+  const suggestions = state.artistDetail?.mb?.genres ?? []
+  for (const name of splitGenres(value)) {
+    // Typing a genre MusicBrainz already suggests just ticks that suggestion.
+    const existing = suggestions.find(g => g.label.toLowerCase() === name.toLowerCase())?.label
+      ?? agPicks.custom.find(c => c.toLowerCase() === name.toLowerCase())
+    if (!existing) agPicks.custom.push(name)
+    agPicks.checked!.add(existing ?? name)
+  }
+  renderArtistGenres()
+  artistGenresEl.querySelector<HTMLInputElement>('.ag-custom')?.focus()
+}
+
+async function removeArtistGenre(genre: string) {
+  const d = state.artistDetail
+  const target = artistDetailFor
+  if (!d || !target || !sameArtist(genreArtist(), target)) return
+  const n = d.current_genres.find(g => g.genre === genre)?.track_count ?? 0
+  const ok = await confirmModal(
+    'Remove genre',
+    `Remove “${genre}” from ${n.toLocaleString()} track${n !== 1 ? 's' : ''} by ${d.artist}? Their other genres are kept. This can be undone.`,
+    'Remove',
+  )
+  if (!ok) return
+  try {
+    const { job_id } = await api.artists.retag(target.name, target.by, [genre], 'remove')
+    scanBtn.disabled = true
+    pollScan(job_id)
+  } catch (e) {
+    toast(String(e).includes('409') ? 'Another job is already running' : `Remove failed: ${e}`, 'error')
+  }
+}
+
 async function fetchArtistGenres(mbid?: string) {
-  const key = state.selectedArtistKey
-  if (key === null) return
+  const target = genreArtist()
+  if (!target) return
   const btn = artistGenresEl.querySelector<HTMLButtonElement>('[data-ag="fetch"]')
   if (btn) { btn.disabled = true; btn.textContent = 'Fetching…' }
   try {
-    const detail = await api.artists.fetch(key, mbid)
-    if (state.selectedArtistKey !== key) return
+    const detail = await api.artists.fetch(target.name, target.by, mbid)
+    if (!sameArtist(genreArtist(), target)) return
+    if (agPicks.checked && detail.mb?.mbid !== state.artistDetail?.mb?.mbid) {
+      // Different MusicBrainz artist: keep custom picks, re-tick its suggestions.
+      agPicks.checked = new Set(agPicks.custom.filter(c => agPicks.checked!.has(c)))
+      const top = detail.mb?.genres[0]?.count ?? 0
+      detail.mb?.genres.filter(g => g.count * 2 >= top).forEach(g => agPicks.checked!.add(g.label))
+    }
     state.artistDetail = detail
-    const entry = state.artistEntries.find(a => a.artist === key)
+    artistDetailFor = target
+    const entry = state.artistEntries.find(a => a.artist === target.name)
     if (entry && !entry.fetched) { entry.fetched = true; renderArtistsPanel() }
     renderArtistGenres()
   } catch (e) {
@@ -343,8 +428,9 @@ async function fetchArtistGenres(mbid?: string) {
 
 async function retagArtist(mode: 'replace' | 'add') {
   const d = state.artistDetail
+  const target = artistDetailFor
   const genres = pickedGenres()
-  if (!d || !genres.length) return
+  if (!d || !target || !sameArtist(genreArtist(), target) || !genres.length) return
   const tracks = `${d.track_count.toLocaleString()} track${d.track_count !== 1 ? 's' : ''}`
   const ok = await confirmModal(
     mode === 'replace' ? 'Replace genres' : 'Add genres',
@@ -355,7 +441,7 @@ async function retagArtist(mode: 'replace' | 'add') {
   )
   if (!ok) return
   try {
-    const { job_id } = await api.artists.retag(d.artist, genres, mode)
+    const { job_id } = await api.artists.retag(target.name, target.by, genres, mode)
     scanBtn.disabled = true
     pollScan(job_id)
   } catch (e) {
@@ -1628,7 +1714,8 @@ async function onJobFinished(job: ScanJob) {
   await loadLibrary()
   await loadGenres()
   if (job.kind === 'scan') await loadTree()
-  if (state.sidebarMode === 'artists') { await loadArtists(); await loadArtistDetail() }
+  if (state.sidebarMode === 'artists') await loadArtists()
+  if (genreArtist()) { artistDetailFor = null; await loadArtistDetail() }
   await loadTracks()
   if (state.sidebarMode === 'quality') await renderQualityPanel()
   renderEditor()
@@ -2263,6 +2350,7 @@ document.querySelector('.sidebar-tabs')!.addEventListener('click', async (e) => 
   if (mode === 'tags') {
     state.selectedDirectory = null
     if (!state.artists.length) await loadLibrary()
+    loadArtistDetail()
   } else if (mode === 'genres') {
     await loadGenres()
   } else if (mode === 'artists') {
@@ -2309,6 +2397,7 @@ artistListEl.addEventListener('click', async (e) => {
     state.selectedIds.clear()
     state.page = 0
     renderTagsPanel()
+    loadArtistDetail()
     await loadTracks()
     renderEditor()
     return
@@ -2321,6 +2410,7 @@ artistListEl.addEventListener('click', async (e) => {
     state.selectedIds.clear()
     state.page = 0
     renderTagsPanel()
+    loadArtistDetail()
     await loadTracks()
     renderEditor()
     return
@@ -2337,6 +2427,7 @@ artistListEl.addEventListener('click', async (e) => {
   state.selectedIds.clear()
   state.page = 0
   renderTagsPanel()
+  loadArtistDetail()
   await loadTracks()
   renderEditor()
 })
@@ -2381,14 +2472,31 @@ fetchAllBtn.addEventListener('click', async () => {
 })
 
 artistGenresEl.addEventListener('click', (e) => {
-  const action = (e.target as HTMLElement).closest<HTMLElement>('[data-ag]')?.dataset.ag
+  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-ag]')
+  const action = el?.dataset.ag
   if (action === 'fetch') fetchArtistGenres()
   else if (action === 'replace' || action === 'add') retagArtist(action)
+  else if (action === 'remove') removeArtistGenre(el!.dataset.genre!)
+  else if (action === 'drop-custom') {
+    e.preventDefault()  // the button sits inside the chip's <label>
+    agPicks.custom = agPicks.custom.filter(c => c !== el!.dataset.genre)
+    agPicks.checked?.delete(el!.dataset.genre!)
+    renderArtistGenres()
+  }
 })
 artistGenresEl.addEventListener('change', (e) => {
-  const target = e.target as HTMLElement
-  if (target.matches('.ag-candidates')) fetchArtistGenres((target as HTMLSelectElement).value)
-  else updatePickedCount()
+  const target = e.target as HTMLInputElement
+  if (target.matches('.ag-candidates')) { fetchArtistGenres(target.value); return }
+  if (target.matches('.ag-pick input')) {
+    if (target.checked) agPicks.checked?.add(target.value)
+    else agPicks.checked?.delete(target.value)
+    updatePickedCount()
+  }
+})
+artistGenresEl.addEventListener('submit', (e) => {
+  e.preventDefault()
+  const input = artistGenresEl.querySelector<HTMLInputElement>('.ag-custom')
+  if (input?.value.trim()) addCustomGenres(input.value)
 })
 
 // Genres panel: genre clicks, rename/remove actions, filter
@@ -2460,6 +2568,7 @@ async function navigateTo(artist: string, album?: string) {
   if (artist) state.expandedArtists.add(artist)
   renderSidebarTabs()
   renderTagsPanel()
+  loadArtistDetail()
   await loadTracks()
   renderEditor()
 }

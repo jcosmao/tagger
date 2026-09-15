@@ -180,39 +180,46 @@ async def run_unify_job(job_id: str, directories: list[str], fields: list[str]) 
     await run_write_job(job_id, plan, "Unified album tags")
 
 
-async def run_retag_artist_job(job_id: str, artist: str, genres: list[str], mode: str) -> None:
-    """Set (replace) or merge in (add) genres on every track of an artist."""
-    from core.artist_genres import ARTIST_KEY
+async def run_retag_artist_job(job_id: str, artist: str, genres: list[str], mode: str,
+                               by: str = "album_artist") -> None:
+    """Set (replace), merge in (add) or take out (remove) genres on every track of an artist."""
+    from core.artist_genres import GROUPINGS
     from core.genres import edit_genres, join_genres
 
     def plan(conn):
-        rows = conn.execute(f"SELECT * FROM tracks WHERE {ARTIST_KEY} = ?", (artist,)).fetchall()
+        rows = conn.execute(f"SELECT * FROM tracks WHERE {GROUPINGS[by]} = ?", (artist,)).fetchall()
         plans = []
         for row in rows:
-            new = join_genres(genres) if mode == "replace" else edit_genres(row["genre"], add=genres)
+            if mode == "replace":
+                new = join_genres(genres)
+            elif mode == "add":
+                new = edit_genres(row["genre"], add=genres)
+            else:
+                new = edit_genres(row["genre"], remove=genres)
             if new != (row["genre"] or ""):
                 plans.append((row, {"genre": new}))
         return plans
 
-    verb = "Set" if mode == "replace" else "Added"
+    verb = {"replace": "Set", "add": "Added", "remove": "Removed"}[mode]
     await run_write_job(job_id, plan, f"{verb} genres of {artist}")
 
 
-async def run_fetch_genres_job(job_id: str, refresh: bool = False) -> None:
+async def run_fetch_genres_job(job_id: str, refresh: bool = False, by: str = "album_artist") -> None:
     """Fetch MusicBrainz genres for every artist not cached yet (or all, with refresh)."""
-    from core.artist_genres import ARTIST_KEY, fetch_artist
+    from core.artist_genres import GROUPINGS, fetch_artist
     from core.database import get_conn
 
     def work() -> int:
         conn = get_conn()
         try:
             known = {r[0] for r in conn.execute("SELECT artist FROM artist_genres")}
+            key = GROUPINGS[by]
             artists = [r[0] for r in conn.execute(
-                f"SELECT DISTINCT {ARTIST_KEY} FROM tracks WHERE {ARTIST_KEY} != '' ORDER BY 1 COLLATE NOCASE")]
+                f"SELECT DISTINCT {key} FROM tracks WHERE {key} != '' ORDER BY 1 COLLATE NOCASE")]
             todo = [a for a in artists if refresh or a not in known]
             _update_job(job_id, total=len(todo), scanned=0)
             for i, artist in enumerate(todo, start=1):
-                fetch_artist(conn, artist)
+                fetch_artist(conn, artist, by=by)
                 conn.commit()
                 _update_job(job_id, scanned=i)
             return len(todo)

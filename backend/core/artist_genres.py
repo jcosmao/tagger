@@ -1,8 +1,9 @@
 """
 Artist genres from MusicBrainz.
 
-An artist is a track's album artist, or its artist when that's empty — so a
-guest on someone else's album or a compilation track stays with that album.
+Artists are grouped either by album artist (else artist) — a guest on someone
+else's album or a compilation track stays with that album — or by the plain
+artist tag. The genre cache is keyed by name and shared by both groupings.
 MusicBrainz genres (the curated list, with vote counts) are fetched per artist
 and cached in `artist_genres`; tagging with them is a separate, explicit step.
 """
@@ -17,6 +18,9 @@ import urllib.request
 from collections import Counter
 
 ARTIST_KEY = "COALESCE(NULLIF(album_artist, ''), NULLIF(artist, ''), '')"
+
+# SQL expression naming a track's artist, per grouping.
+GROUPINGS = {"album_artist": ARTIST_KEY, "artist": "COALESCE(artist, '')"}
 
 _MB_ROOT = "https://musicbrainz.org/ws/2/"
 _USER_AGENT = "tagger/0.2 ( https://github.com/rnhinson/tagger )"
@@ -72,11 +76,12 @@ def pick_match(name: str, candidates: list[dict]) -> dict | None:
     return top if top and top.get("score", 0) >= 90 else None
 
 
-def _tagged_mbid(conn, artist: str) -> str | None:
+def _tagged_mbid(conn, artist: str, by: str = "album_artist") -> str | None:
     """Most common MusicBrainz id already present on the artist's tracks."""
+    id_col = ("mb_artist_id" if by == "artist" else
+              "CASE WHEN COALESCE(album_artist, '') != '' THEN mb_album_artist_id ELSE mb_artist_id END")
     rows = conn.execute(
-        f"SELECT CASE WHEN COALESCE(album_artist, '') != '' THEN mb_album_artist_id ELSE mb_artist_id END "
-        f"FROM tracks WHERE {ARTIST_KEY} = ?",
+        f"SELECT {id_col} FROM tracks WHERE {GROUPINGS[by]} = ?",
         (artist,),
     ).fetchall()
     ids = Counter(r[0] for r in rows if r[0])
@@ -95,14 +100,14 @@ def cached(conn, artist: str) -> dict | None:
     return _row(r) if r else None
 
 
-def fetch_artist(conn, artist: str, mbid: str | None = None) -> dict:
+def fetch_artist(conn, artist: str, mbid: str | None = None, by: str = "album_artist") -> dict:
     """Resolve the artist on MusicBrainz, fetch its genres, cache and return the result."""
     previous = cached(conn, artist)
     candidates = previous["candidates"] if previous else []
     entry = {"mbid": None, "mb_name": None, "disambiguation": None, "genres": [], "error": None}
     try:
         if not mbid:
-            mbid = _tagged_mbid(conn, artist)
+            mbid = _tagged_mbid(conn, artist, by)
         if not mbid:
             hits = _mb_get("artist", {"query": f'artist:"{artist}"', "limit": 10}).get("artists", [])
             match = pick_match(artist, hits)

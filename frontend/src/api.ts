@@ -54,6 +54,9 @@ export interface ArtistEntry {
   fetched: boolean
 }
 
+// Artist tab groups by the artist tag; Album Artist tab by album artist, else artist.
+export type ArtistGrouping = 'artist' | 'album_artist'
+
 export interface ArtistDetail {
   artist: string
   track_count: number
@@ -280,11 +283,13 @@ export const api = {
 
   artists: {
     list: () => request<ArtistEntry[]>('GET', '/api/artists'),
-    detail: (name: string) => request<ArtistDetail>('GET', `/api/artists/detail?name=${encodeURIComponent(name)}`),
-    fetch: (artist: string, mbid?: string) => request<ArtistDetail>('POST', '/api/artists/fetch', { artist, mbid }),
+    detail: (name: string, by: ArtistGrouping) =>
+      request<ArtistDetail>('GET', `/api/artists/detail?name=${encodeURIComponent(name)}&by=${by}`),
+    fetch: (artist: string, by: ArtistGrouping, mbid?: string) =>
+      request<ArtistDetail>('POST', '/api/artists/fetch', { artist, mbid, by }),
     fetchAll: (refresh = false) => request<{ job_id: string }>('POST', '/api/artists/fetch-all', { refresh }),
-    retag: (artist: string, genres: string[], mode: 'replace' | 'add') =>
-      request<{ job_id: string }>('POST', '/api/artists/retag', { artist, genres, mode }),
+    retag: (artist: string, by: ArtistGrouping, genres: string[], mode: 'replace' | 'add' | 'remove') =>
+      request<{ job_id: string }>('POST', '/api/artists/retag', { artist, genres, mode, by }),
   },
 
   jobs: {

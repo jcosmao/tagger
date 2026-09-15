@@ -219,3 +219,33 @@ def test_fetch_job_does_not_block_retag_but_blocks_another_fetch(client, library
     # ...and the global running-job lookup ignores it, so scans still start.
     from core.tasks import active_job
     assert active_job() is None or active_job()["kind"] != "fetch"
+
+
+# ─── Grouping by the artist tag (Artist tab) ──────────────────────────────────
+
+def test_detail_and_retag_by_artist_tag_include_compilation_tracks(client, library, mb):
+    detail = client.get("/api/artists/detail", params={"name": "Nirvana", "by": "artist"}).json()
+    assert detail["track_count"] == 3  # the compilation track counts too
+    r = client.post("/api/artists/retag",
+                    json={"artist": "Nirvana", "genres": ["Grunge"], "mode": "replace", "by": "artist"})
+    job = _wait_job(client, r.json()["job_id"])
+    assert job["scanned"] == 3
+    assert read_tags(library["compil/1.flac"][1])["genre"] == "Grunge"
+
+
+def test_fetch_by_artist_tag_uses_track_artist_id(client, library, mb):
+    with db() as conn:
+        conn.execute("UPDATE tracks SET mb_artist_id = ?, mb_album_artist_id = 'va' WHERE artist = 'Nirvana'",
+                     (NIRVANA_UK,))
+    body = client.post("/api/artists/fetch", json={"artist": "Nirvana", "by": "artist"}).json()
+    assert body["mb"]["mbid"] == NIRVANA_UK
+    assert body["track_count"] == 3
+
+
+def test_retag_remove_drops_one_genre_keeping_others(client, library, mb):
+    r = client.post("/api/artists/retag", json={"artist": "Nirvana", "genres": ["Rock"], "mode": "remove"})
+    job = _wait_job(client, r.json()["job_id"])
+    assert job["scanned"] == 1  # only nevermind/1 had Rock
+    assert read_tags(library["nevermind/1.flac"][1])["genre"] == "Grunge"
+    assert read_tags(library["nevermind/2.flac"][1])["genre"] == "Punk Rock"
+    assert "Removed genres" in client.get("/api/library/history").json()[0]["summary"]

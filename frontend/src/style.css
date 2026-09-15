@@ -285,6 +285,12 @@ body.resizing-pane, body.resizing-pane * { cursor: col-resize !important; user-s
 .ag-pick input { width: 13px; height: 13px; margin: 0; }
 .ag-candidates { max-width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 12px; font-family: var(--font); padding: 2px 4px; }
 .ag-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ag-x { background: none; border: none; padding: 0 0 0 2px; margin: 0; color: var(--text-dim); cursor: pointer; font-size: 11px; line-height: 1; }
+.ag-x:hover { color: var(--danger); }
+.ag-custom-chip { border-style: dashed; border-color: var(--border); }
+.ag-add-form { display: inline-flex; gap: 4px; align-items: center; }
+.ag-custom { width: 150px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 12px; font-family: var(--font); padding: 2px 6px; }
+.ag-custom:focus { outline: none; border-color: var(--accent); }
 .ag-muted { color: var(--text-muted); }
 .ag-error { color: var(--danger); }
 .artist-genres a { color: var(--accent); }
