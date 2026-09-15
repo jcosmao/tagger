@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from api.config import get_music_dirs
-from core.tasks import active_scan, create_scan_job, get_job, list_jobs, run_scan_job
+from core.tasks import active_job, create_scan_job, get_job, list_jobs, run_scan_job
 
 router = APIRouter()
 
@@ -23,9 +23,9 @@ def _under_music_dir(directory: str) -> bool:
 @router.post("/scan")
 async def start_scan(background_tasks: BackgroundTasks, directory: Optional[str] = Query(None)):
     """Start a full scan, or a targeted rescan of `directory` (must be under a music dir)."""
-    running = active_scan()
+    running = active_job()
     if running:
-        raise HTTPException(409, {"detail": "A scan is already running", "job_id": running["id"]})
+        raise HTTPException(409, {"detail": f"A {running['kind']} job is already running", "job_id": running["id"]})
 
     if directory is not None:
         directory = os.path.normpath(directory)

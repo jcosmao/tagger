@@ -6,11 +6,13 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from core.database import db
 from core.genres import edit_genres, normalize_genre
+from core.tasks import active_job, create_job, run_unify_job
+from core.unify import UNIFY_FIELDS
 from core.history import log_change, snapshot
 from core.tagger import write_tags, TAG_FIELDS
 from core.replaygain import rg_tool, scan as rg_scan
@@ -115,6 +117,11 @@ class BulkTagUpdate(BaseModel):
     tags: TagUpdate
     genre_add: list[str] = []      # merged into each track's own genres
     genre_remove: list[str] = []
+
+
+class UnifyAlbums(BaseModel):
+    directories: list[str]
+    fields: list[str]
 
 
 class GenreRename(BaseModel):
@@ -350,6 +357,19 @@ def bulk_update_tags(update: BulkTagUpdate):
         log_change(conn, "tag_edit", f"Bulk edit — {len(snaps)} tracks", snaps)
 
     return {"ok": True, "errors": errors}
+
+
+@router.post("/unify-albums")
+async def unify_albums(req: UnifyAlbums, background_tasks: BackgroundTasks):
+    """Unify album-level tags of the given album directories, as a background job."""
+    if not req.fields or set(req.fields) - set(UNIFY_FIELDS):
+        raise HTTPException(400, f"fields must be among {UNIFY_FIELDS}")
+    running = active_job()
+    if running:
+        raise HTTPException(409, {"detail": f"A {running['kind']} job is already running", "job_id": running["id"]})
+    job_id = create_job("unify")
+    background_tasks.add_task(run_unify_job, job_id, req.directories, req.fields)
+    return {"job_id": job_id}
 
 
 @router.post("/genres/rename")

@@ -23,6 +23,7 @@ export const QUALITY_ISSUES: { key: keyof IssueCount; label: string; warn?: bool
   { key: 'missing_track_number', label: 'Missing track #'  },
   { key: 'duplicate_tracks',     label: 'Duplicate tracks', warn: true },
   { key: 'missing_files',        label: 'Missing files',    warn: true },
+  { key: 'inconsistent_albums',  label: 'Inconsistent albums', warn: true },
 ]
 
 // ─── Case normalization ─────────────────────────────────────────────────────────

@@ -84,6 +84,7 @@ export interface ChangeLogEntry {
 
 export interface ScanJob {
   id: string
+  kind: 'scan' | 'unify' | 'undo'
   status: 'pending' | 'running' | 'done' | 'error'
   started_at: number | null
   finished_at: number | null
@@ -146,6 +147,17 @@ export interface IssueCount {
   missing_track_number: number
   duplicate_tracks: number
   missing_files: number
+  inconsistent_albums: number
+}
+
+export type UnifyField = 'genre' | 'year' | 'album' | 'album_artist' | 'compilation'
+
+export interface AlbumInconsistency {
+  directory: string
+  album: string | null
+  artist: string | null
+  track_count: number
+  changes: Partial<Record<UnifyField, { before: Record<string, number>; after: string; changed: number }>>
 }
 
 export interface TreeEntry {
@@ -214,7 +226,9 @@ export const api = {
       return `/api/library/export.m3u${qs ? '?' + qs : ''}`
     },
     history: (limit = 50) => request<ChangeLogEntry[]>('GET', `/api/library/history?limit=${limit}`),
-    undo: (id: number) => request<{ restored: number; kind: string }>('POST', `/api/library/history/${id}/undo`),
+    undo: (id: number) =>
+      request<{ restored: number; kind: string; job_id?: string }>('POST', `/api/library/history/${id}/undo`),
+    albumInconsistencies: () => request<AlbumInconsistency[]>('GET', '/api/library/album-inconsistencies'),
     dedupeKeepBest: () => request<{ removed: number }>('POST', '/api/library/dedupe/keep-best'),
     trashInfo: () => request<{ count: number; bytes: number }>('GET', '/api/library/trash'),
     emptyTrash: () => request<{ removed: number; bytes: number }>('POST', '/api/library/trash/empty'),
@@ -225,6 +239,8 @@ export const api = {
       request<{ ok: boolean }>('PATCH', `/api/tags/${trackId}`, tags),
     bulk: (trackIds: number[], tags: TagUpdate, genreOps: GenreOps = {}) =>
       request<{ ok: boolean; errors: unknown[] }>('POST', '/api/tags/bulk', { track_ids: trackIds, tags, ...genreOps }),
+    unifyAlbums: (directories: string[], fields: UnifyField[]) =>
+      request<{ job_id: string }>('POST', '/api/tags/unify-albums', { directories, fields }),
     renameGenre: (oldName: string, newName: string) =>
       request<{ changed: number; errors: unknown[] }>('POST', '/api/tags/genres/rename', { old: oldName, new: newName }),
     replaygain: (trackIds: number[], albumMode = false) =>

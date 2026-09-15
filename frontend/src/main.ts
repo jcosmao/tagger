@@ -1,5 +1,5 @@
 import './style.css'
-import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
 import { state, PAGE_SIZE, TAG_FIELDS, DirNode, SidebarMode, saveColPrefs } from './state'
@@ -1218,9 +1218,12 @@ function renderScanStatus() {
   const job = state.scanJob
   if (!job || job.status === 'done' || job.status === 'error') { scanStatusEl.textContent = ''; return }
   const pct = job.total ? Math.round((job.scanned / job.total) * 100) : 0
-  scanStatusEl.textContent = job.status === 'running'
-    ? `Scanning… ${job.scanned}/${job.total} (${pct}%)`
-    : 'Starting scan…'
+  const verb = { scan: 'Scanning', unify: 'Unifying albums', undo: 'Undoing' }[job.kind] ?? 'Working'
+  scanStatusEl.textContent = job.status !== 'running'
+    ? `${verb}…`
+    : job.kind === 'undo'
+      ? `${verb} ${job.total} tracks…`
+      : `${verb}… ${job.scanned}/${job.total} (${pct}%)`
 }
 
 // ─── Data loading ─────────────────────────────────────────────────────────────
@@ -1365,7 +1368,7 @@ async function startScan(directory?: string) {
     const { job_id } = await api.jobs.startScan(directory)
     pollScan(job_id)
   } catch (e) {
-    const msg = String(e).includes('409') ? 'A scan is already running' : `Scan failed to start: ${e}`
+    const msg = String(e).includes('409') ? 'Another job is already running' : `Scan failed to start: ${e}`
     toast(msg, 'error')
     scanBtn.disabled = false
     updateRescanBtn()
@@ -1384,17 +1387,7 @@ function pollScan(jobId: string) {
         state.scanPollTimer = null
         scanBtn.disabled = false
         updateRescanBtn()
-        if (job.status === 'done') {
-          toast(`Scan complete — ${job.scanned} tracks indexed`, 'success')
-          state.qualityIssues = null
-          await loadLibrary()
-          await loadGenres()
-          await loadTree()
-          await loadTracks()
-          if (state.sidebarMode === 'quality') await renderQualityPanel()
-        } else {
-          toast(`Scan error: ${job.error}`, 'error')
-        }
+        await onJobFinished(job)
         renderScanStatus()
       }
     } catch (e) {
@@ -1402,9 +1395,170 @@ function pollScan(jobId: string) {
       state.scanPollTimer = null
       scanBtn.disabled = false
       updateRescanBtn()
-      toast(`Scan polling failed: ${e}`, 'error')
+      toast(`Job polling failed: ${e}`, 'error')
     }
   }, 1000)
+}
+
+async function onJobFinished(job: ScanJob) {
+  const plural = (n: number) => `${n.toLocaleString()} track${n !== 1 ? 's' : ''}`
+  if (job.status === 'error') {
+    toast(`${{ scan: 'Scan', unify: 'Album unify', undo: 'Undo' }[job.kind] ?? 'Job'} failed: ${job.error}`, 'error')
+  } else if (job.kind === 'scan') {
+    toast(`Scan complete — ${job.scanned} tracks indexed`, 'success')
+  } else if (job.kind === 'unify') {
+    toast(`Unified ${plural(job.scanned)}${job.error ? ` — ${job.error}` : ''}`, job.error ? 'error' : 'success')
+  } else {
+    toast(`Undone — restored ${plural(job.scanned)}`, 'success')
+  }
+  state.qualityIssues = null
+  await loadLibrary()
+  await loadGenres()
+  if (job.kind === 'scan') await loadTree()
+  await loadTracks()
+  if (state.sidebarMode === 'quality') await renderQualityPanel()
+  renderEditor()
+  await refreshUndoButton()
+}
+
+// Pick up a job still running from before a page reload.
+async function resumeRunningJob() {
+  try {
+    const running = (await api.jobs.list()).find(j => j.status === 'pending' || j.status === 'running')
+    if (running) { scanBtn.disabled = true; pollScan(running.id) }
+  } catch { /* not critical */ }
+}
+
+// ─── Album unify ──────────────────────────────────────────────────────────────
+
+const UNIFY_GROUPS: { label: string; fields: UnifyField[] }[] = [
+  { label: 'Genre', fields: ['genre'] },
+  { label: 'Year (earliest)', fields: ['year'] },
+  { label: 'Album / Album artist / Compilation', fields: ['album', 'album_artist', 'compilation'] },
+]
+
+async function showUnifyAlbums() {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-card unify-card">
+      <div class="modal-title">Unify album tags</div>
+      <div class="modal-hint" id="unify-summary">Loading…</div>
+      <div class="unify-toolbar">
+        ${UNIFY_GROUPS.map((g, i) => `<label class="unify-field"><input type="checkbox" data-group="${i}" checked /> ${g.label}</label>`).join('')}
+      </div>
+      <div class="unify-toolbar">
+        <input id="unify-filter" class="nav-filter" type="search" placeholder="Filter albums…" autocomplete="off" />
+        <button type="button" class="btn btn-ghost btn-sm" id="unify-all">All</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="unify-none">None</button>
+      </div>
+      <ul class="unify-list" id="unify-list"></ul>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="unify-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="unify-apply" disabled>Apply</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true) }
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }
+  document.addEventListener('keydown', onKey, true)
+  overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+  overlay.querySelector('#unify-cancel')!.addEventListener('click', close)
+
+  const listEl    = overlay.querySelector<HTMLElement>('#unify-list')!
+  const summaryEl = overlay.querySelector<HTMLElement>('#unify-summary')!
+  const applyBtn  = overlay.querySelector<HTMLButtonElement>('#unify-apply')!
+  const filterEl  = overlay.querySelector<HTMLInputElement>('#unify-filter')!
+
+  let albums: AlbumInconsistency[]
+  try {
+    albums = await api.library.albumInconsistencies()
+  } catch (e) {
+    summaryEl.textContent = `Failed to load: ${e}`
+    return
+  }
+
+  const enabledFields = (): UnifyField[] =>
+    [...overlay.querySelectorAll<HTMLInputElement>('.unify-field input')]
+      .filter(cb => cb.checked)
+      .flatMap(cb => UNIFY_GROUPS[Number(cb.dataset.group)].fields)
+
+  const chip = (field: UnifyField, change: { before: Record<string, number>; after: string }) => {
+    const before = Object.entries(change.before)
+      .map(([v, n]) => `<span class="unify-before">${esc(v || '(empty)')} <b>×${n}</b></span>`).join('')
+    return `<div class="unify-change" data-field="${field}"><span class="unify-name">${field.replace('_', ' ')}</span> ${before} <span class="unify-arrow">→</span> <span class="unify-after">${esc(change.after || '(empty)')}</span></div>`
+  }
+
+  const frag = document.createDocumentFragment()
+  albums.forEach((a, i) => {
+    const li = document.createElement('li')
+    li.className = 'unify-album'
+    li.dataset.index = String(i)
+    li.dataset.search = `${a.artist ?? ''} ${a.album ?? ''} ${a.directory}`.toLowerCase()
+    li.innerHTML = `
+      <label class="unify-album-head">
+        <input type="checkbox" checked />
+        <span class="unify-album-name">${esc(a.artist || '?')} — ${esc(a.album || a.directory.split('/').pop() || '')}</span>
+        <span class="nav-count">${a.track_count} tracks</span>
+      </label>
+      ${(Object.entries(a.changes) as [UnifyField, NonNullable<AlbumInconsistency['changes'][UnifyField]>][])
+        .map(([f, c]) => chip(f, c)).join('')}
+    `
+    frag.appendChild(li)
+  })
+  listEl.appendChild(frag)
+
+  // Show only albums with a change in an enabled field that match the filter.
+  const refresh = () => {
+    const fields = new Set(enabledFields())
+    const needle = filterEl.value.trim().toLowerCase()
+    let shown = 0, checked = 0, tracks = 0
+    listEl.querySelectorAll<HTMLElement>('.unify-album').forEach(li => {
+      const a = albums[Number(li.dataset.index)]
+      li.querySelectorAll<HTMLElement>('.unify-change').forEach(c => { c.hidden = !fields.has(c.dataset.field as UnifyField) })
+      const relevant = (Object.keys(a.changes) as UnifyField[]).filter(f => fields.has(f))
+      li.hidden = !relevant.length || (!!needle && !li.dataset.search!.includes(needle))
+      if (li.hidden) return
+      shown++
+      if (li.querySelector<HTMLInputElement>('input')!.checked) {
+        checked++
+        tracks += Math.max(...relevant.map(f => a.changes[f]!.changed))
+      }
+    })
+    summaryEl.textContent = albums.length
+      ? `${shown.toLocaleString()} album${shown !== 1 ? 's' : ''} to unify · ${checked.toLocaleString()} selected · at least ${tracks.toLocaleString()} track${tracks !== 1 ? 's' : ''} rewritten`
+      : 'Every album is consistent.'
+    applyBtn.disabled = checked === 0
+    applyBtn.textContent = checked ? `Apply to ${checked.toLocaleString()} album${checked !== 1 ? 's' : ''}` : 'Apply'
+  }
+  refresh()
+
+  overlay.querySelectorAll('.unify-field input').forEach(cb => cb.addEventListener('change', refresh))
+  filterEl.addEventListener('input', refresh)
+  listEl.addEventListener('change', refresh)
+  const setVisible = (on: boolean) => {
+    listEl.querySelectorAll<HTMLElement>('.unify-album:not([hidden]) input').forEach(cb => { (cb as HTMLInputElement).checked = on })
+    refresh()
+  }
+  overlay.querySelector('#unify-all')!.addEventListener('click', () => setVisible(true))
+  overlay.querySelector('#unify-none')!.addEventListener('click', () => setVisible(false))
+
+  applyBtn.addEventListener('click', async () => {
+    const directories = [...listEl.querySelectorAll<HTMLElement>('.unify-album:not([hidden])')]
+      .filter(li => li.querySelector<HTMLInputElement>('input')!.checked)
+      .map(li => albums[Number(li.dataset.index)].directory)
+    applyBtn.disabled = true
+    try {
+      const { job_id } = await api.tags.unifyAlbums(directories, enabledFields())
+      close()
+      scanBtn.disabled = true
+      pollScan(job_id)
+    } catch (e) {
+      toast(String(e).includes('409') ? 'Another job is already running' : `Unify failed: ${e}`, 'error')
+      applyBtn.disabled = false
+    }
+  })
 }
 
 // ─── Tag saving ───────────────────────────────────────────────────────────────
@@ -1766,6 +1920,7 @@ async function undoLast() {
   undoBtn.disabled = true
   try {
     const res = await api.library.undo(Number(id))
+    if (res.job_id) { scanBtn.disabled = true; pollScan(res.job_id); return }
     toast(`Undone — restored ${res.restored} track${res.restored !== 1 ? 's' : ''}`, 'success')
     state.qualityIssues = null
     await reloadNav()
@@ -2216,6 +2371,7 @@ qualityListEl.addEventListener('click', async (e) => {
   const li = (e.target as HTMLElement).closest<HTMLElement>('.quality-issue-item')
   if (!li?.dataset.issue) return
   const issue = li.dataset.issue
+  if (issue === 'inconsistent_albums') { await showUnifyAlbums(); return }
   clearSearch()
   state.selectedIssue = state.selectedIssue === issue ? null : issue
   qualityToolbar.hidden = !state.selectedIssue || state.selectedIssue === 'missing_files'
@@ -2546,6 +2702,7 @@ async function startApp() {
   }).catch(() => {})
   api.spectrogram.status().then(s => { spectrogramAvailable = s.available }).catch(() => {})
   await refreshUndoButton()
+  resumeRunningJob()
   await loadLibrary()
   loadGenres()  // feeds the genre autocomplete in every mode
   await loadTracks()

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Album consistency
+- **Inconsistent albums** in the Quality panel: albums (folders) whose tracks
+  disagree on genre, year, album, album artist or compilation, with a preview
+  of every proposed value before anything is written.
+- Rules: genres present on more than half the tracks; the earliest year, as
+  `YYYY`; the most common album / album artist; compilation by majority.
+  Fields without a clear answer are left alone.
+- Runs as a background job with progress, resumed after a page reload, and is
+  undoable. Large undos also run in the background.
+
 ### Genres
 - **Genres** sidebar tab: every genre with its track count, a filter box, and
   one click to list its tracks (also exportable as `.m3u`).

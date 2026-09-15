@@ -43,6 +43,8 @@ def _migrate(conn) -> None:
     ):
         if col not in have:
             conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} {decl}")
+    if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(scan_jobs)")}:
+        conn.execute("ALTER TABLE scan_jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'scan'")
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < 1:
@@ -132,6 +134,7 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS scan_jobs (
                 id          TEXT PRIMARY KEY,
+                kind        TEXT NOT NULL DEFAULT 'scan',  -- 'scan' | 'unify' | 'undo'
                 status      TEXT NOT NULL DEFAULT 'pending',
                 started_at  REAL,
                 finished_at REAL,

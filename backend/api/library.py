@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from core.config import settings
 from core.database import db
 from core.genres import split_genres
 from core.history import log_change, snapshot, list_changes, undo_change
+from core.tasks import active_job, create_job, run_undo_job
+from core.unify import inconsistencies
+
+# Undoing more tracks than this rewrites too many files for one request.
+UNDO_JOB_THRESHOLD = 200
 
 router = APIRouter()
 
@@ -93,6 +99,7 @@ def get_issues():
             ).fetchone()[0]
         rows = conn.execute("SELECT path FROM tracks").fetchall()
         result["missing_files"] = sum(1 for r in rows if not Path(r["path"]).exists())
+        result["inconsistent_albums"] = len(inconsistencies(conn))
     return result
 
 
@@ -221,12 +228,28 @@ def get_history(limit: int = Query(50, le=200)):
 
 
 @router.post("/history/{change_id}/undo")
-def undo(change_id: int):
+def undo(change_id: int, background_tasks: BackgroundTasks):
     with db() as conn:
-        try:
-            return undo_change(conn, change_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc))
+        row = conn.execute("SELECT data FROM change_log WHERE id = ?", (change_id,)).fetchone()
+        size = len(json.loads(row["data"]).get("tracks", [])) if row else 0
+        if size <= UNDO_JOB_THRESHOLD:
+            try:
+                return undo_change(conn, change_id)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+    running = active_job()
+    if running:
+        raise HTTPException(409, {"detail": f"A {running['kind']} job is already running", "job_id": running["id"]})
+    job_id = create_job("undo")
+    background_tasks.add_task(run_undo_job, job_id, change_id, size)
+    return {"job_id": job_id, "restored": 0, "kind": "tag_edit"}
+
+
+@router.get("/album-inconsistencies")
+def album_inconsistencies():
+    """Albums (directories) whose tracks disagree on album-level tags, with proposed values."""
+    with db() as conn:
+        return inconsistencies(conn)
 
 
 @router.get("/tracks")

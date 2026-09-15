@@ -262,6 +262,27 @@ body.resizing-pane, body.resizing-pane * { cursor: col-resize !important; user-s
 .modal-hint { font-size: 12px; color: var(--text-muted); }
 .modal-hint:empty { display: none; }
 
+/* ─── Album unify modal ─────────────────────────────────────────────────────── */
+
+.modal-card.unify-card { width: 760px; max-height: 88vh; }
+.unify-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.unify-field { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.unify-field input { width: 15px; height: 15px; padding: 0; }
+.unify-toolbar .nav-filter { flex: 1; min-width: 160px; }
+.unify-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 120px; border: 1px solid var(--border); border-radius: var(--radius); }
+.unify-album { padding: 8px 10px; border-bottom: 1px solid var(--border-subtle, var(--border)); }
+.unify-album:last-child { border-bottom: none; }
+.unify-album[hidden], .unify-change[hidden] { display: none; }
+.unify-album-head { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.unify-album-head input { width: 15px; height: 15px; padding: 0; flex-shrink: 0; }
+.unify-album-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unify-change { margin: 4px 0 0 23px; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+.unify-name { display: inline-block; min-width: 86px; color: var(--text-dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }
+.unify-before { display: inline-block; margin: 1px 2px; padding: 0 6px; border-radius: 9px; background: var(--surface2); color: var(--text-muted); white-space: nowrap; }
+.unify-before b { font-weight: 500; color: var(--text-dim); }
+.unify-arrow { color: var(--text-dim); }
+.unify-after { display: inline-block; margin: 1px 2px; padding: 0 6px; border-radius: 9px; background: var(--accent-dim); color: var(--accent); white-space: nowrap; }
+
 /* ─── Directory tree ────────────────────────────────────────────────────────── */
 
 .dir-tree { padding: 6px 0; }
