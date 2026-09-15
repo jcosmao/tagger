@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Artists
-- **Artists** sidebar tab, grouped by album artist (else artist), with a
+- **Album Artist** sidebar tab, grouped by album artist (else artist), with a
   filter and the tracks of the selected artist.
 - Fetch an artist's genres from MusicBrainz (curated genres with vote counts),
   matched by the MusicBrainz id already in the tags or by name; homonyms can
@@ -15,6 +15,9 @@
 
 ### Fixes
 - The pagination bar no longer stays visible on views that fit on one page.
+- The artist tree tab is labelled **Artist** (it groups by the artist tag); sidebar
+  tabs wrap instead of truncating when the sidebar is narrow, and the default
+  sidebar width is 240px.
 
 ### Album consistency
 - **Inconsistent albums** in the Quality panel: albums (folders) whose tracks

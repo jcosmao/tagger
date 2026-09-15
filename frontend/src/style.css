@@ -17,7 +17,7 @@
   --success:      #3fb950;
   --font:   -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --radius: 6px;
-  --sidebar-w: 220px;
+  --sidebar-w: 240px;
   --editor-w: 272px;
 }
 
@@ -136,6 +136,7 @@ body.resizing-pane, body.resizing-pane * { cursor: col-resize !important; user-s
 
 .sidebar-tabs {
   display: flex;
+  flex-wrap: wrap;  /* narrow sidebar: wrap tabs rather than truncate them */
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -149,8 +150,7 @@ body.resizing-pane, body.resizing-pane * { cursor: col-resize !important; user-s
   font-size: 11px;
   font-weight: 600;
   font-family: var(--font);
-  padding: 8px 2px;
-  min-width: 0;
+  padding: 8px 1px;
   cursor: pointer;
   letter-spacing: 0;
   white-space: nowrap;

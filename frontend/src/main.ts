@@ -2194,7 +2194,7 @@ document.querySelector('.sidebar')!.addEventListener('click', (e) => {
 // The left nav and the right tag editor can each be widened by dragging the
 // divider beside them; widths persist per-browser and reset on double-click.
 const PANE = {
-  sidebar: { key: 'tagger_sidebar_w', varName: '--sidebar-w', def: 220, min: 160, max: 560, el: sidebarEl },
+  sidebar: { key: 'tagger_sidebar_w', varName: '--sidebar-w', def: 240, min: 160, max: 560, el: sidebarEl },
   editor:  { key: 'tagger_editor_w',  varName: '--editor-w',  def: 272, min: 240, max: 720, el: tagEditor },
 } as const
 type PaneName = keyof typeof PANE

@@ -112,8 +112,8 @@ export const APP_HTML = `
   <div class="workspace">
     <aside class="sidebar">
       <div class="sidebar-tabs">
-        <button class="stab active" data-mode="tags">Tags</button>
-        <button class="stab" data-mode="artists">Artists</button>
+        <button class="stab active" data-mode="tags" title="Grouped by the artist tag">Artist</button>
+        <button class="stab" data-mode="artists" title="Grouped by album artist (else artist), with MusicBrainz genres">Album Artist</button>
         <button class="stab" data-mode="genres">Genres</button>
         <button class="stab" data-mode="files">Files</button>
         <button class="stab" data-mode="quality">Quality</button>
