@@ -2,7 +2,7 @@ import './style.css'
 import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
-import { state, PAGE_SIZE, TAG_FIELDS, DirNode, SidebarMode, saveColPrefs } from './state'
+import { state, PAGE_SIZE, TAG_FIELDS, ALWAYS_COLS, DirNode, SidebarMode, saveColPrefs } from './state'
 import { COL_DEFS } from './columns'
 import {
   trackQuality, QUALITY_TITLES, QUALITY_ISSUES,
@@ -797,6 +797,7 @@ function renderColPicker() {
     cb.type = 'checkbox'
     cb.checked = state.visibleCols.has(col.key)
     cb.dataset.col = col.key
+    if (ALWAYS_COLS.includes(col.key)) { cb.checked = true; cb.disabled = true; label.title = 'Always shown' }
     label.appendChild(cb)
     label.append(' ' + col.label)
     colPickerEl.appendChild(label)
@@ -941,7 +942,8 @@ function renderTracks() {
     tr.querySelectorAll<HTMLElement>('.tag-link').forEach(link => {
       link.addEventListener('click', (e) => {
         e.stopPropagation()
-        navigateTo(link.dataset.artist ?? '', link.dataset.album)
+        if (link.dataset.albumArtist !== undefined) navigateToAlbumArtist(link.dataset.albumArtist)
+        else navigateTo(link.dataset.artist ?? '', link.dataset.album)
       })
     })
     trackTbody.appendChild(tr)
@@ -2571,6 +2573,21 @@ async function navigateTo(artist: string, album?: string) {
   loadArtistDetail()
   await loadTracks()
   renderEditor()
+}
+
+async function navigateToAlbumArtist(name: string) {
+  clearSearch()
+  state.sidebarMode = 'artists'
+  state.selectedArtistKey = name
+  state.selectedIds.clear()
+  state.page = 0
+  renderSidebarTabs()
+  if (!state.artistEntries.length) await loadArtists()
+  else renderArtistsPanel()
+  loadArtistDetail()
+  await loadTracks()
+  renderEditor()
+  artistKeyListEl.querySelector('.nav-item.active')?.scrollIntoView({ block: 'nearest' })
 }
 
 // Track table clicks

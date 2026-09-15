@@ -15,6 +15,9 @@
   each current genre has a ✕ to remove it from all the artist's tracks.
 - The genre panel also shows in the **Artist** tab, where it works on the
   tracks carrying that artist tag (compilation tracks included).
+- The track list always shows an **Album Artist** column after Album, even with
+  saved column preferences; clicking an album artist opens it in the Album
+  Artist tab.
 
 ### Fixes
 - The pagination bar no longer stays visible on views that fit on one page.

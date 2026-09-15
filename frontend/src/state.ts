@@ -1,13 +1,15 @@
 import { Track, Artist, Album, Genre, ArtistEntry, ArtistDetail, ScanJob, LookupResult, IssueCount } from './api'
 
 export const PAGE_SIZE = 100
-export const DEFAULT_COLS = ['quality', 'title', 'artist', 'album', 'year', 'track_number', 'format', 'duration']
+export const DEFAULT_COLS = ['quality', 'title', 'artist', 'album', 'album_artist', 'year', 'track_number', 'format', 'duration']
+// Shown whatever the saved column preferences say.
+export const ALWAYS_COLS = ['album_artist']
 const COLS_KEY = 'tagger_visible_cols'
 
 export function loadColPrefs(): Set<string> {
   try {
     const saved = localStorage.getItem(COLS_KEY)
-    if (saved) return new Set(JSON.parse(saved))
+    if (saved) return new Set([...JSON.parse(saved), ...ALWAYS_COLS])
   } catch { /* ignore */ }
   return new Set(DEFAULT_COLS)
 }
