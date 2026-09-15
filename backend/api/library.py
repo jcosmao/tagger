@@ -10,6 +10,7 @@ from fastapi.responses import PlainTextResponse
 
 from core.config import settings
 from core.database import db
+from core.artist_genres import ARTIST_KEY
 from core.genres import split_genres
 from core.history import log_change, snapshot, list_changes, undo_change
 from core.tasks import active_job, create_job, run_undo_job
@@ -53,9 +54,13 @@ def _track_filters(
     album: Optional[str],
     issue: Optional[str],
     genre: Optional[str] = None,
+    artist_key: Optional[str] = None,
 ) -> tuple[str, list, str]:
     """Build the shared WHERE clause + ORDER BY used by listing and export."""
     clauses, params = [], []
+    if artist_key is not None:
+        clauses.append(f"{ARTIST_KEY} = ?")
+        params.append(artist_key)
     if genre is not None:
         if genre == "":
             clauses.append("(genre IS NULL OR genre = '')")
@@ -259,10 +264,11 @@ def list_tracks(
     album: Optional[str] = None,
     issue: Optional[str] = None,
     genre: Optional[str] = None,
+    artist_key: Optional[str] = None,
     limit: int = Query(100, le=500),
     offset: int = 0,
 ):
-    where, params, order = _track_filters(directory, artist, album, issue, genre)
+    where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
 
     with db() as conn:
         rows = conn.execute(
@@ -296,6 +302,7 @@ def export_m3u(
     album: Optional[str] = None,
     issue: Optional[str] = None,
     genre: Optional[str] = None,
+    artist_key: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(10000, le=100000),
 ):
@@ -312,7 +319,7 @@ def export_m3u(
                 (_fts_query(q), limit),
             ).fetchall()
         else:
-            where, params, order = _track_filters(directory, artist, album, issue, genre)
+            where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
             rows = conn.execute(
                 f"SELECT * FROM tracks {where} {order} LIMIT ?", [*params, limit]
             ).fetchall()
@@ -381,6 +388,7 @@ def list_track_ids(
     album: Optional[str] = None,
     issue: Optional[str] = None,
     genre: Optional[str] = None,
+    artist_key: Optional[str] = None,
     q: Optional[str] = None,
 ):
     """Every track id matching a view (same filters as /tracks, or a search)."""
@@ -390,7 +398,7 @@ def list_track_ids(
                 "SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?", (_fts_query(q),)
             ).fetchall()
         else:
-            where, params, order = _track_filters(directory, artist, album, issue, genre)
+            where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
             rows = conn.execute(f"SELECT id FROM tracks {where} {order}", params).fetchall()
     return [r[0] for r in rows]
 

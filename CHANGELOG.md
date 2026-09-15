@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Artists
+- **Artists** sidebar tab, grouped by album artist (else artist), with a
+  filter and the tracks of the selected artist.
+- Fetch an artist's genres from MusicBrainz (curated genres with vote counts),
+  matched by the MusicBrainz id already in the tags or by name; homonyms can
+  be switched from a menu. Results are cached, and "Fetch all" fills the cache
+  for every artist in the background without blocking other jobs.
+- Pick genres and replace, or add to, the genres of all the artist's tracks,
+  as an undoable background job. MusicBrainz names are spelled the way the
+  library already spells them.
+
+### Fixes
+- The pagination bar no longer stays visible on views that fit on one page.
+
 ### Album consistency
 - **Inconsistent albums** in the Quality panel: albums (folders) whose tracks
   disagree on genre, year, album, album artist or compilation, with a preview

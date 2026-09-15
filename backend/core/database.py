@@ -143,6 +143,17 @@ def init_db() -> None:
                 error       TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS artist_genres (
+                artist         TEXT PRIMARY KEY,   -- album artist, else artist
+                mbid           TEXT,
+                mb_name        TEXT,
+                disambiguation TEXT,
+                genres         TEXT NOT NULL,      -- JSON [{name, count}] by votes
+                candidates     TEXT NOT NULL,      -- JSON same-name MusicBrainz artists
+                fetched_at     REAL NOT NULL,
+                error          TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL

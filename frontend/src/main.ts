@@ -1,5 +1,5 @@
 import './style.css'
-import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistDetail, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
 import { state, PAGE_SIZE, TAG_FIELDS, DirNode, SidebarMode, saveColPrefs } from './state'
@@ -19,6 +19,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = APP_HTML
 const appEl          = document.querySelector<HTMLDivElement>('#app')!
 const artistListEl   = document.getElementById('artist-list')!
 const genreListEl    = document.getElementById('genre-list')!
+const artistKeyListEl = document.getElementById('artist-key-list')!
+const artistFilterEl = document.getElementById('artist-filter') as HTMLInputElement
+const artistGenresEl = document.getElementById('artist-genres')!
+const fetchAllBtn    = document.getElementById('fetch-all-btn') as HTMLButtonElement
+const fetchAllStatus = document.getElementById('fetch-all-status')!
 const genreFilterEl  = document.getElementById('genre-filter') as HTMLInputElement
 const genreOptionsEl = document.getElementById('genre-options')!
 const genreModeEl    = document.getElementById('genre-mode') as HTMLSelectElement
@@ -137,6 +142,8 @@ function renderSidebarTabs() {
   })
   document.getElementById('panel-tags')!.hidden    = state.sidebarMode !== 'tags'
   document.getElementById('panel-genres')!.hidden  = state.sidebarMode !== 'genres'
+  document.getElementById('panel-artists')!.hidden = state.sidebarMode !== 'artists'
+  renderArtistGenres()
   document.getElementById('panel-files')!.hidden   = state.sidebarMode !== 'files'
   document.getElementById('panel-quality')!.hidden = state.sidebarMode !== 'quality'
 }
@@ -183,6 +190,207 @@ function renderTagsPanel() {
       }
     }
   }
+}
+
+// ─── Artists panel ────────────────────────────────────────────────────────────
+
+const ARTIST_BATCH = 300
+
+function renderArtistsPanel() {
+  artistKeyListEl.innerHTML = ''
+  const allLi = document.createElement('li')
+  allLi.className = 'nav-item nav-all' + (state.selectedArtistKey === null ? ' active' : '')
+  allLi.dataset.all = '1'
+  allLi.innerHTML = `<span class="nav-icon">♪</span><span class="nav-label">All tracks</span>`
+  artistKeyListEl.appendChild(allLi)
+
+  const needle = state.artistFilter.trim().toLowerCase()
+  const matches = state.artistEntries.filter(a => !needle || a.artist.toLowerCase().includes(needle))
+  // Thousands of artists: render in batches as the list scrolls.
+  let rendered = 0
+  const more = document.createElement('li')
+  more.className = 'nav-more'
+  const renderMore = () => {
+    for (const a of matches.slice(rendered, rendered + ARTIST_BATCH)) {
+      const li = document.createElement('li')
+      li.className = 'nav-item nav-genre' + (state.selectedArtistKey === a.artist ? ' active' : '')
+      li.dataset.artistKey = a.artist
+      li.innerHTML = `
+        <span class="nav-label">${esc(a.artist || '(Unknown artist)')}</span>
+        ${a.fetched ? '<span class="nav-fetched" title="MusicBrainz genres fetched">●</span>' : ''}
+        <span class="nav-count">${a.track_count}</span>
+      `
+      artistKeyListEl.insertBefore(li, more)
+    }
+    rendered += ARTIST_BATCH
+    if (rendered >= matches.length) more.remove()
+  }
+  artistKeyListEl.appendChild(more)
+  renderMore()
+  if (rendered < matches.length) {
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) renderMore()
+      if (rendered >= matches.length) io.disconnect()
+    }, { root: artistKeyListEl.parentElement, rootMargin: '400px' })
+    io.observe(more)
+  }
+}
+
+async function loadArtists() {
+  try {
+    state.artistEntries = await api.artists.list()
+    renderArtistsPanel()
+  } catch (e) {
+    toast(`Failed to load artists: ${e}`, 'error')
+  }
+}
+
+async function loadArtistDetail() {
+  const key = state.selectedArtistKey
+  state.artistDetail = null
+  renderArtistGenres()
+  if (key === null) return
+  try {
+    const detail = await api.artists.detail(key)
+    if (state.selectedArtistKey === key) { state.artistDetail = detail; renderArtistGenres() }
+  } catch (e) {
+    toast(`Failed to load artist: ${e}`, 'error')
+  }
+}
+
+function renderArtistGenres() {
+  const d = state.artistDetail
+  artistGenresEl.hidden = state.sidebarMode !== 'artists' || state.selectedArtistKey === null || !!state.query
+  if (artistGenresEl.hidden) return
+  if (!d) { artistGenresEl.innerHTML = '<div class="ag-muted">Loading…</div>'; return }
+
+  const plural = (n: number) => `${n.toLocaleString()} track${n !== 1 ? 's' : ''}`
+  const current = d.current_genres.length
+    ? d.current_genres.map(g => `<span class="ag-chip">${esc(g.genre)} <b>×${g.track_count}</b></span>`).join('')
+    : '<span class="ag-muted">none</span>'
+
+  let mbRow: string
+  const mb = d.mb
+  if (!mb) {
+    mbRow = `<span class="ag-muted">Not fetched yet.</span>`
+  } else if (mb.error) {
+    mbRow = `<span class="ag-error">MusicBrainz error: ${esc(mb.error)}</span>`
+  } else if (!mb.mbid) {
+    mbRow = `<span class="ag-muted">No matching artist on MusicBrainz.</span>`
+  } else {
+    const label = (c: { name: string | null; disambiguation: string | null }) =>
+      esc(c.name ?? '') + (c.disambiguation ? ` (${esc(c.disambiguation)})` : '')
+    const match = mb.candidates.length > 1
+      ? `<select class="ag-candidates" title="Pick the right artist">${mb.candidates.map(c =>
+          `<option value="${esc(c.id)}"${c.id === mb.mbid ? ' selected' : ''}>${label(c)}</option>`).join('')}</select>`
+      : `<a href="https://musicbrainz.org/artist/${esc(mb.mbid)}" target="_blank" rel="noopener">${label({ name: mb.mb_name, disambiguation: mb.disambiguation })}</a>`
+    const top = mb.genres[0]?.count ?? 0
+    const chips = mb.genres.length
+      ? mb.genres.map(g => `
+          <label class="ag-chip ag-pick"><input type="checkbox" value="${esc(g.label)}"${g.count * 2 >= top ? ' checked' : ''} />
+          ${esc(g.label)} <b>${g.count}</b></label>`).join('')
+      : '<span class="ag-muted">This artist has no genres on MusicBrainz.</span>'
+    mbRow = `${match}<div class="ag-chips">${chips}</div>`
+  }
+
+  artistGenresEl.innerHTML = `
+    <div class="ag-head">
+      <span class="ag-title">${esc(d.artist || '(Unknown artist)')}</span>
+      <span class="ag-muted">${plural(d.track_count)}</span>
+      <button class="btn btn-ghost btn-sm" data-ag="fetch">${mb ? 'Refresh' : 'Fetch genres'}</button>
+    </div>
+    <div class="ag-row"><span class="ag-label">On tracks</span><div class="ag-chips">${current}</div></div>
+    <div class="ag-row"><span class="ag-label">MusicBrainz</span><div class="ag-mb">${mbRow}</div></div>
+    ${mb?.genres.length ? `
+    <div class="ag-actions">
+      <button class="btn btn-primary btn-sm" data-ag="replace">Replace genres on ${plural(d.track_count)}</button>
+      <button class="btn btn-ghost btn-sm" data-ag="add">Add to ${plural(d.track_count)}</button>
+      <span class="ag-muted" data-ag-count></span>
+    </div>` : ''}
+  `
+  updatePickedCount()
+}
+
+function pickedGenres(): string[] {
+  return [...artistGenresEl.querySelectorAll<HTMLInputElement>('.ag-pick input:checked')].map(cb => cb.value)
+}
+
+function updatePickedCount() {
+  const picked = pickedGenres()
+  const count = artistGenresEl.querySelector('[data-ag-count]')
+  if (count) count.textContent = picked.length ? picked.join('; ') : 'Pick at least one genre'
+  artistGenresEl.querySelectorAll<HTMLButtonElement>('[data-ag="replace"], [data-ag="add"]')
+    .forEach(b => { b.disabled = !picked.length })
+}
+
+async function fetchArtistGenres(mbid?: string) {
+  const key = state.selectedArtistKey
+  if (key === null) return
+  const btn = artistGenresEl.querySelector<HTMLButtonElement>('[data-ag="fetch"]')
+  if (btn) { btn.disabled = true; btn.textContent = 'Fetching…' }
+  try {
+    const detail = await api.artists.fetch(key, mbid)
+    if (state.selectedArtistKey !== key) return
+    state.artistDetail = detail
+    const entry = state.artistEntries.find(a => a.artist === key)
+    if (entry && !entry.fetched) { entry.fetched = true; renderArtistsPanel() }
+    renderArtistGenres()
+  } catch (e) {
+    toast(`Fetch failed: ${e}`, 'error')
+    renderArtistGenres()
+  }
+}
+
+async function retagArtist(mode: 'replace' | 'add') {
+  const d = state.artistDetail
+  const genres = pickedGenres()
+  if (!d || !genres.length) return
+  const tracks = `${d.track_count.toLocaleString()} track${d.track_count !== 1 ? 's' : ''}`
+  const ok = await confirmModal(
+    mode === 'replace' ? 'Replace genres' : 'Add genres',
+    mode === 'replace'
+      ? `Set the genres of ${tracks} by ${d.artist} to “${genres.join('; ')}”? Their current genres are removed. This can be undone.`
+      : `Add “${genres.join('; ')}” to ${tracks} by ${d.artist}, keeping their current genres? This can be undone.`,
+    mode === 'replace' ? 'Replace' : 'Add',
+  )
+  if (!ok) return
+  try {
+    const { job_id } = await api.artists.retag(d.artist, genres, mode)
+    scanBtn.disabled = true
+    pollScan(job_id)
+  } catch (e) {
+    toast(String(e).includes('409') ? 'Another job is already running' : `Retag failed: ${e}`, 'error')
+  }
+}
+
+let fetchAllTimer: ReturnType<typeof setInterval> | null = null
+
+function pollFetchAll(jobId: string) {
+  if (fetchAllTimer) clearInterval(fetchAllTimer)
+  fetchAllBtn.disabled = true
+  fetchAllStatus.hidden = false
+  fetchAllStatus.textContent = 'Starting…'
+  const tick = async () => {
+    try {
+      const job = await api.jobs.get(jobId)
+      if (job.status === 'pending' || job.status === 'running') {
+        fetchAllStatus.textContent = job.total ? `Fetching genres… ${job.scanned}/${job.total}` : 'Starting…'
+        return
+      }
+      clearInterval(fetchAllTimer!); fetchAllTimer = null
+      fetchAllBtn.disabled = false
+      fetchAllStatus.hidden = true
+      toast(job.status === 'done' ? `Fetched genres for ${job.scanned} artist${job.scanned !== 1 ? 's' : ''}` : `Fetch failed: ${job.error}`,
+            job.status === 'done' ? 'success' : 'error')
+      if (state.sidebarMode === 'artists') { await loadArtists(); await loadArtistDetail() }
+    } catch (e) {
+      clearInterval(fetchAllTimer!); fetchAllTimer = null
+      fetchAllBtn.disabled = false
+      fetchAllStatus.hidden = true
+    }
+  }
+  fetchAllTimer = setInterval(tick, 2000)
+  tick()
 }
 
 // ─── Genres panel ─────────────────────────────────────────────────────────────
@@ -1218,7 +1426,7 @@ function renderScanStatus() {
   const job = state.scanJob
   if (!job || job.status === 'done' || job.status === 'error') { scanStatusEl.textContent = ''; return }
   const pct = job.total ? Math.round((job.scanned / job.total) * 100) : 0
-  const verb = { scan: 'Scanning', unify: 'Unifying albums', undo: 'Undoing' }[job.kind] ?? 'Working'
+  const verb = { scan: 'Scanning', unify: 'Unifying albums', undo: 'Undoing', retag: 'Retagging', fetch: 'Fetching' }[job.kind] ?? 'Working'
   scanStatusEl.textContent = job.status !== 'running'
     ? `${verb}…`
     : job.kind === 'undo'
@@ -1329,6 +1537,10 @@ async function loadTracks() {
       const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
       if (state.selectedGenre !== null) params.genre = state.selectedGenre
       result = await api.library.tracks(params)
+    } else if (state.sidebarMode === 'artists') {
+      const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
+      if (state.selectedArtistKey !== null) params.artist_key = state.selectedArtistKey
+      result = await api.library.tracks(params)
     } else if (state.sidebarMode === 'quality') {
       if (!state.selectedIssue) {
         state.tracks = []; state.total = 0; renderTracks(); renderPagination(); return
@@ -1403,11 +1615,12 @@ function pollScan(jobId: string) {
 async function onJobFinished(job: ScanJob) {
   const plural = (n: number) => `${n.toLocaleString()} track${n !== 1 ? 's' : ''}`
   if (job.status === 'error') {
-    toast(`${{ scan: 'Scan', unify: 'Album unify', undo: 'Undo' }[job.kind] ?? 'Job'} failed: ${job.error}`, 'error')
+    toast(`${{ scan: 'Scan', unify: 'Album unify', undo: 'Undo', retag: 'Retag', fetch: 'Fetch' }[job.kind] ?? 'Job'} failed: ${job.error}`, 'error')
   } else if (job.kind === 'scan') {
     toast(`Scan complete — ${job.scanned} tracks indexed`, 'success')
-  } else if (job.kind === 'unify') {
-    toast(`Unified ${plural(job.scanned)}${job.error ? ` — ${job.error}` : ''}`, job.error ? 'error' : 'success')
+  } else if (job.kind === 'unify' || job.kind === 'retag') {
+    const verb = job.kind === 'unify' ? 'Unified' : 'Retagged'
+    toast(`${verb} ${plural(job.scanned)}${job.error ? ` — ${job.error}` : ''}`, job.error ? 'error' : 'success')
   } else {
     toast(`Undone — restored ${plural(job.scanned)}`, 'success')
   }
@@ -1415,6 +1628,7 @@ async function onJobFinished(job: ScanJob) {
   await loadLibrary()
   await loadGenres()
   if (job.kind === 'scan') await loadTree()
+  if (state.sidebarMode === 'artists') { await loadArtists(); await loadArtistDetail() }
   await loadTracks()
   if (state.sidebarMode === 'quality') await renderQualityPanel()
   renderEditor()
@@ -1424,8 +1638,19 @@ async function onJobFinished(job: ScanJob) {
 // Pick up a job still running from before a page reload.
 async function resumeRunningJob() {
   try {
-    const running = (await api.jobs.list()).find(j => j.status === 'pending' || j.status === 'running')
+    const running = (await api.jobs.list())
+      .find(j => (j.status === 'pending' || j.status === 'running') && j.kind !== 'fetch')
     if (running) { scanBtn.disabled = true; pollScan(running.id) }
+  } catch { /* not critical */ }
+}
+
+// The genre fetch job runs alongside others; its progress lives in the Artists panel.
+async function resumeFetchAll() {
+  if (fetchAllTimer) return
+  try {
+    const running = (await api.jobs.list())
+      .find(j => (j.status === 'pending' || j.status === 'running') && j.kind === 'fetch')
+    if (running) pollFetchAll(running.id)
   } catch { /* not critical */ }
 }
 
@@ -1856,6 +2081,9 @@ function currentViewParams(): Record<string, string | number> {
   if (state.sidebarMode === 'genres') {
     return state.selectedGenre !== null ? { genre: state.selectedGenre } : {}
   }
+  if (state.sidebarMode === 'artists') {
+    return state.selectedArtistKey !== null ? { artist_key: state.selectedArtistKey } : {}
+  }
   if (state.sidebarMode === 'quality') {
     return state.selectedIssue && state.selectedIssue !== 'missing_files'
       ? { issue: state.selectedIssue }
@@ -2037,6 +2265,11 @@ document.querySelector('.sidebar-tabs')!.addEventListener('click', async (e) => 
     if (!state.artists.length) await loadLibrary()
   } else if (mode === 'genres') {
     await loadGenres()
+  } else if (mode === 'artists') {
+    renderSidebarTabs()
+    await loadArtists()
+    loadArtistDetail()
+    resumeFetchAll()
   } else if (mode === 'files') {
     state.selectedArtist = null
     state.selectedAlbum  = null
@@ -2117,6 +2350,45 @@ document.getElementById('expand-all-btn')!.addEventListener('click', () => {
 document.getElementById('collapse-all-btn')!.addEventListener('click', () => {
   state.expandedArtists.clear()
   renderTagsPanel()
+})
+
+// Artists panel: artist clicks, filter, fetch all; genre panel actions
+artistKeyListEl.addEventListener('click', async (e) => {
+  const li = (e.target as HTMLElement).closest<HTMLElement>('.nav-item')
+  if (!li) return
+  clearSearch()
+  state.selectedArtistKey = li.dataset.all === '1' ? null : (li.dataset.artistKey ?? null)
+  state.selectedIds.clear()
+  state.page = 0
+  renderArtistsPanel()
+  loadArtistDetail()
+  await loadTracks()
+  renderEditor()
+})
+
+artistFilterEl.addEventListener('input', () => {
+  state.artistFilter = artistFilterEl.value
+  renderArtistsPanel()
+})
+
+fetchAllBtn.addEventListener('click', async () => {
+  try {
+    const { job_id } = await api.artists.fetchAll()
+    pollFetchAll(job_id)
+  } catch (e) {
+    toast(String(e).includes('409') ? 'Genres are already being fetched' : `Fetch failed: ${e}`, 'error')
+  }
+})
+
+artistGenresEl.addEventListener('click', (e) => {
+  const action = (e.target as HTMLElement).closest<HTMLElement>('[data-ag]')?.dataset.ag
+  if (action === 'fetch') fetchArtistGenres()
+  else if (action === 'replace' || action === 'add') retagArtist(action)
+})
+artistGenresEl.addEventListener('change', (e) => {
+  const target = e.target as HTMLElement
+  if (target.matches('.ag-candidates')) fetchArtistGenres((target as HTMLSelectElement).value)
+  else updatePickedCount()
 })
 
 // Genres panel: genre clicks, rename/remove actions, filter
@@ -2412,6 +2684,7 @@ function clearSearch() {
 
 searchEl.addEventListener('input', () => {
   state.query = searchEl.value.trim()
+  renderArtistGenres()
   debouncedSearch()
 })
 

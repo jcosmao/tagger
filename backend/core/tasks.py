@@ -37,12 +37,18 @@ def get_job(job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def active_job() -> dict | None:
-    """Return the currently running/pending job of any kind, if any."""
+def active_job(kind: str | None = None) -> dict | None:
+    """
+    Return the running/pending job that writes the library (scan, unify, retag,
+    undo), or with `kind`, the running job of that kind. Genre fetch jobs only
+    fill a cache, so they don't count as library jobs.
+    """
+    clause, params = ("kind = ?", (kind,)) if kind else ("kind != 'fetch'", ())
     with db() as conn:
         row = conn.execute(
-            "SELECT * FROM scan_jobs WHERE status IN ('pending', 'running') "
-            "ORDER BY started_at DESC LIMIT 1"
+            f"SELECT * FROM scan_jobs WHERE status IN ('pending', 'running') AND {clause} "
+            "ORDER BY started_at DESC LIMIT 1",
+            params,
         ).fetchone()
     return dict(row) if row else None
 
@@ -138,30 +144,30 @@ async def run_scan_job(job_id: str, directory: str | None = None) -> None:
         logger.exception("scan %s failed: %s", job_id, exc)
 
 
-async def run_unify_job(job_id: str, directories: list[str], fields: list[str]) -> None:
-    """Rewrite album-level tags so every track of each album agrees."""
+async def run_write_job(job_id: str, plan, summary: str) -> None:
+    """
+    Run a tag-writing job: `plan(conn)` returns [(track row, updates)], each is
+    written to file + DB, and the whole run is logged as one undoable change
+    titled "<summary> — N tracks".
+    """
+    kind = (get_job(job_id) or {}).get("kind", "job")
     _update_job(job_id, status="running")
-    logger.info("unify %s started (%d albums, fields=%s)", job_id, len(directories), fields)
+    logger.info("%s %s started: %s", kind, job_id, summary)
     try:
-        changed, failed = await asyncio.to_thread(_unify, job_id, directories, fields)
+        changed, failed = await asyncio.to_thread(_apply_plans, job_id, plan, summary)
         _update_job(job_id, status="done", finished_at=time.time(), scanned=changed,
                     error=f"{failed} tracks could not be written" if failed else None)
-        logger.info("unify %s done: %d tracks changed, %d failed", job_id, changed, failed)
+        logger.info("%s %s done: %d tracks changed, %d failed", kind, job_id, changed, failed)
     except Exception as exc:
         _update_job(job_id, status="error", finished_at=time.time(), error=str(exc))
-        logger.exception("unify %s failed: %s", job_id, exc)
+        logger.exception("%s %s failed: %s", kind, job_id, exc)
 
 
-def _unify(job_id: str, directories: list[str], fields: list[str]) -> tuple[int, int]:
-    from api.tags import _write_track  # local import avoids a router import cycle
-    from core.database import get_conn
-    from core.history import log_change
+async def run_unify_job(job_id: str, directories: list[str], fields: list[str]) -> None:
+    """Rewrite album-level tags so every track of each album agrees."""
     from core.unify import album_groups, propose
 
-    conn = get_conn()
-    snaps: list[dict] = []
-    failed = 0
-    try:
+    def plan(conn):
         plans = []
         for rows in album_groups(conn, directories).values():
             changes = propose([dict(r) for r in rows], fields)
@@ -169,6 +175,69 @@ def _unify(job_id: str, directories: list[str], fields: list[str]) -> tuple[int,
                 updates = {f: c["after"] for f, c in changes.items() if (row[f] or "") != c["after"]}
                 if updates:
                     plans.append((row, updates))
+        return plans
+
+    await run_write_job(job_id, plan, "Unified album tags")
+
+
+async def run_retag_artist_job(job_id: str, artist: str, genres: list[str], mode: str) -> None:
+    """Set (replace) or merge in (add) genres on every track of an artist."""
+    from core.artist_genres import ARTIST_KEY
+    from core.genres import edit_genres, join_genres
+
+    def plan(conn):
+        rows = conn.execute(f"SELECT * FROM tracks WHERE {ARTIST_KEY} = ?", (artist,)).fetchall()
+        plans = []
+        for row in rows:
+            new = join_genres(genres) if mode == "replace" else edit_genres(row["genre"], add=genres)
+            if new != (row["genre"] or ""):
+                plans.append((row, {"genre": new}))
+        return plans
+
+    verb = "Set" if mode == "replace" else "Added"
+    await run_write_job(job_id, plan, f"{verb} genres of {artist}")
+
+
+async def run_fetch_genres_job(job_id: str, refresh: bool = False) -> None:
+    """Fetch MusicBrainz genres for every artist not cached yet (or all, with refresh)."""
+    from core.artist_genres import ARTIST_KEY, fetch_artist
+    from core.database import get_conn
+
+    def work() -> int:
+        conn = get_conn()
+        try:
+            known = {r[0] for r in conn.execute("SELECT artist FROM artist_genres")}
+            artists = [r[0] for r in conn.execute(
+                f"SELECT DISTINCT {ARTIST_KEY} FROM tracks WHERE {ARTIST_KEY} != '' ORDER BY 1 COLLATE NOCASE")]
+            todo = [a for a in artists if refresh or a not in known]
+            _update_job(job_id, total=len(todo), scanned=0)
+            for i, artist in enumerate(todo, start=1):
+                fetch_artist(conn, artist)
+                conn.commit()
+                _update_job(job_id, scanned=i)
+            return len(todo)
+        finally:
+            conn.close()
+
+    _update_job(job_id, status="running")
+    try:
+        done = await asyncio.to_thread(work)
+        _update_job(job_id, status="done", finished_at=time.time(), scanned=done)
+    except Exception as exc:
+        _update_job(job_id, status="error", finished_at=time.time(), error=str(exc))
+        logger.exception("fetch %s failed: %s", job_id, exc)
+
+
+def _apply_plans(job_id: str, plan, summary: str) -> tuple[int, int]:
+    from api.tags import _write_track  # local import avoids a router import cycle
+    from core.database import get_conn
+    from core.history import log_change
+
+    conn = get_conn()
+    snaps: list[dict] = []
+    failed = 0
+    try:
+        plans = plan(conn)
         conn.commit()
         _update_job(job_id, total=len(plans), scanned=0)
 
@@ -187,7 +256,7 @@ def _unify(job_id: str, directories: list[str], fields: list[str]) -> tuple[int,
                 last = time.time()
     finally:
         # Log whatever was written, even if the job died part-way.
-        log_change(conn, "tag_edit", f"Unified album tags — {len(snaps)} tracks", snaps)
+        log_change(conn, "tag_edit", f"{summary} — {len(snaps)} tracks", snaps)
         conn.commit()
         conn.close()
     return len(snaps), failed

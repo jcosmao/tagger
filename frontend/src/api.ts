@@ -48,6 +48,27 @@ export interface Genre {
   track_count: number
 }
 
+export interface ArtistEntry {
+  artist: string       // album artist, else artist; "" = neither
+  track_count: number
+  fetched: boolean
+}
+
+export interface ArtistDetail {
+  artist: string
+  track_count: number
+  current_genres: Genre[]
+  mb: {
+    mbid: string | null
+    mb_name: string | null
+    disambiguation: string | null
+    genres: { name: string; label: string; count: number }[]
+    candidates: { id: string; name: string; disambiguation: string | null; score: number }[]
+    fetched_at: number
+    error: string | null
+  } | null
+}
+
 export interface GenreOps {
   genre_add?: string[]
   genre_remove?: string[]
@@ -84,7 +105,7 @@ export interface ChangeLogEntry {
 
 export interface ScanJob {
   id: string
-  kind: 'scan' | 'unify' | 'undo'
+  kind: 'scan' | 'unify' | 'undo' | 'retag' | 'fetch'
   status: 'pending' | 'running' | 'done' | 'error'
   started_at: number | null
   finished_at: number | null
@@ -255,6 +276,15 @@ export const api = {
     findReplace: (trackIds: number[], field: string, find: string, replace: string) =>
       request<{ changed: number }>('POST', '/api/tags/find-replace',
         { track_ids: trackIds, field, find, replace }),
+  },
+
+  artists: {
+    list: () => request<ArtistEntry[]>('GET', '/api/artists'),
+    detail: (name: string) => request<ArtistDetail>('GET', `/api/artists/detail?name=${encodeURIComponent(name)}`),
+    fetch: (artist: string, mbid?: string) => request<ArtistDetail>('POST', '/api/artists/fetch', { artist, mbid }),
+    fetchAll: (refresh = false) => request<{ job_id: string }>('POST', '/api/artists/fetch-all', { refresh }),
+    retag: (artist: string, genres: string[], mode: 'replace' | 'add') =>
+      request<{ job_id: string }>('POST', '/api/artists/retag', { artist, genres, mode }),
   },
 
   jobs: {

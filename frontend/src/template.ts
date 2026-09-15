@@ -113,6 +113,7 @@ export const APP_HTML = `
     <aside class="sidebar">
       <div class="sidebar-tabs">
         <button class="stab active" data-mode="tags">Tags</button>
+        <button class="stab" data-mode="artists">Artists</button>
         <button class="stab" data-mode="genres">Genres</button>
         <button class="stab" data-mode="files">Files</button>
         <button class="stab" data-mode="quality">Quality</button>
@@ -123,6 +124,14 @@ export const APP_HTML = `
           <button id="collapse-all-btn" class="btn btn-ghost btn-sm">Collapse all</button>
         </div>
         <ul id="artist-list" class="nav-list"></ul>
+      </nav>
+      <nav id="panel-artists" class="sidebar-panel" hidden>
+        <div class="nav-toolbar">
+          <input id="artist-filter" class="nav-filter" type="search" placeholder="Filter artists…" autocomplete="off" />
+          <button id="fetch-all-btn" class="btn btn-ghost btn-sm nav-toolbar-fixed" title="Fetch MusicBrainz genres for every artist not fetched yet (about 1–2 s per artist)">Fetch all</button>
+        </div>
+        <div id="fetch-all-status" class="nav-status" hidden></div>
+        <ul id="artist-key-list" class="nav-list"></ul>
       </nav>
       <nav id="panel-genres" class="sidebar-panel" hidden>
         <div class="nav-toolbar">
@@ -179,6 +188,7 @@ export const APP_HTML = `
           </div>
         </div>
       </div>
+      <section id="artist-genres" class="artist-genres" hidden></section>
       <div id="bulk-actions" class="bulk-actions" hidden>
         <span id="selection-count" class="selection-count"></span>
         <button id="select-matching-btn" class="btn btn-link btn-sm" hidden></button>
