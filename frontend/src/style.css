@@ -55,7 +55,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   flex-shrink: 0;
 }
 
-.search-wrap { flex: 1; max-width: 380px; margin: 0 8px; }
+.search-wrap { position: relative; flex: 1; max-width: 380px; margin: 0 8px; }
 
 .search-input {
   width: 100%;
@@ -73,6 +73,18 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 .search-input::placeholder { color: var(--text-dim); }
+.search-input.search-invalid,
+.search-input.search-invalid:focus { border-color: var(--danger); }
+.search-error {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 60;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  word-break: break-word;
+}
 
 .topbar-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 

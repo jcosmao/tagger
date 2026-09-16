@@ -15,6 +15,7 @@ from core.genres import split_genres
 from core.history import log_change, snapshot, list_changes, undo_change
 from core.tasks import active_job, create_job, run_undo_job
 from core.unify import inconsistencies
+from core.query import QueryError, compile_query, looks_advanced
 
 # Undoing more tracks than this rewrites too many files for one request.
 UNDO_JOB_THRESHOLD = 200
@@ -309,14 +310,9 @@ def export_m3u(
     """Export the current view (same filters as /tracks, or a search) as .m3u."""
     with db() as conn:
         if q:
+            source, params, order = _search_sql(q)
             rows = conn.execute(
-                """
-                SELECT t.* FROM tracks t
-                JOIN tracks_fts f ON f.rowid = t.id
-                WHERE tracks_fts MATCH ?
-                ORDER BY rank LIMIT ?
-                """,
-                (_fts_query(q), limit),
+                f"SELECT t.* FROM {source} {order} LIMIT ?", [*params, limit]
             ).fetchall()
         else:
             where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
@@ -340,32 +336,34 @@ def _fts_query(q: str) -> str:
     return " ".join(f'"{t}"*' for t in terms if t)
 
 
+def _search_sql(q: str) -> tuple[str, list, str]:
+    """FROM+WHERE, params and ORDER BY for a search box query: an advanced
+    SQL-like expression (see core.query) when it compiles, else full-text."""
+    try:
+        where, params, order = compile_query(q)
+    except QueryError as exc:
+        if looks_advanced(q):
+            raise HTTPException(400, str(exc))
+    else:
+        return f"tracks t WHERE {where}", params, order or \
+            "ORDER BY t.directory, t.disc_number, t.track_number, t.title"
+    return "tracks t JOIN tracks_fts f ON f.rowid = t.id WHERE tracks_fts MATCH ?", \
+        [_fts_query(q)], "ORDER BY rank"
+
+
 @router.get("/search")
 def search_tracks(
     q: str,
     limit: int = Query(50, le=200),
     offset: int = 0,
 ):
-    fts_q = _fts_query(q)
+    source, params, order = _search_sql(q)
     with db() as conn:
         rows = conn.execute(
-            """
-            SELECT t.* FROM tracks t
-            JOIN tracks_fts f ON f.rowid = t.id
-            WHERE tracks_fts MATCH ?
-            ORDER BY rank
-            LIMIT ? OFFSET ?
-            """,
-            (fts_q, limit, offset),
+            f"SELECT t.* FROM {source} {order} LIMIT ? OFFSET ?",
+            [*params, limit, offset],
         ).fetchall()
-        total = conn.execute(
-            """
-            SELECT COUNT(*) FROM tracks t
-            JOIN tracks_fts f ON f.rowid = t.id
-            WHERE tracks_fts MATCH ?
-            """,
-            (fts_q,),
-        ).fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) FROM {source}", params).fetchone()[0]
 
     return {"total": total, "tracks": [_row(r) for r in rows]}
 
@@ -394,9 +392,8 @@ def list_track_ids(
     """Every track id matching a view (same filters as /tracks, or a search)."""
     with db() as conn:
         if q:
-            rows = conn.execute(
-                "SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?", (_fts_query(q),)
-            ).fetchall()
+            source, params, order = _search_sql(q)
+            rows = conn.execute(f"SELECT t.id FROM {source} {order}", params).fetchall()
         else:
             where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
             rows = conn.execute(f"SELECT id FROM tracks {where} {order}", params).fetchall()

@@ -203,6 +203,12 @@ export function setUnauthorizedHandler(fn: () => void): void {
   unauthorizedHandler = fn
 }
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly detail: string) {
+    super(message)
+  }
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
@@ -213,7 +219,9 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     // A 401 on anything other than the login attempt means the session lapsed.
     if (res.status === 401 && !url.startsWith('/api/auth/login')) unauthorizedHandler?.()
     const text = await res.text()
-    throw new Error(`${method} ${url} → ${res.status}: ${text}`)
+    let detail = text
+    try { detail = JSON.parse(text).detail ?? text } catch { /* not JSON */ }
+    throw new ApiError(`${method} ${url} → ${res.status}: ${text}`, res.status, String(detail))
   }
   return res.json() as Promise<T>
 }

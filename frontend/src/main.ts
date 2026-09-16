@@ -1,5 +1,5 @@
 import './style.css'
-import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, ApiError, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
 import { state, PAGE_SIZE, TAG_FIELDS, ALWAYS_COLS, DirNode, SidebarMode, saveColPrefs } from './state'
@@ -40,6 +40,7 @@ const editorTitle    = document.getElementById('editor-title')!
 const bulkActions    = document.getElementById('bulk-actions')!
 const selectionCount = document.getElementById('selection-count')!
 const searchEl       = document.getElementById('search') as HTMLInputElement
+const searchError    = document.getElementById('search-error')!
 const scanBtn        = document.getElementById('scan-btn') as HTMLButtonElement
 const rescanFolderBtn = document.getElementById('rescan-folder-btn') as HTMLButtonElement
 const scanStatusEl   = document.getElementById('scan-status')!
@@ -1654,12 +1655,19 @@ async function loadTracks() {
       if (state.selectedAlbum  !== null) params.album  = state.selectedAlbum
       result = await api.library.tracks(params)
     }
+    showSearchError(null)
     state.tracks = result.tracks
     state.total  = result.total
     renderTracks()
     renderPagination()
     renderFormatOptions()
   } catch (e) {
+    // A malformed advanced query is expected while typing: flag it inline.
+    if (state.query && e instanceof ApiError && e.status === 400) {
+      showSearchError(e.detail)
+      state.tracks = []; state.total = 0; renderTracks(); renderPagination()
+      return
+    }
     toast(`Failed to load tracks: ${e}`, 'error')
     trackLoading.hidden = true
   }
@@ -2816,6 +2824,13 @@ const debouncedSearch = debounce(async () => {
 function clearSearch() {
   state.query = ''
   searchEl.value = ''
+  showSearchError(null)
+}
+
+function showSearchError(message: string | null) {
+  searchEl.classList.toggle('search-invalid', message !== null)
+  searchError.textContent = message ?? ''
+  searchError.hidden = message === null
 }
 
 searchEl.addEventListener('input', () => {

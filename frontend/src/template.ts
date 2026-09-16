@@ -3,7 +3,9 @@ export const APP_HTML = `
     <button id="sidebar-toggle" class="btn btn-ghost btn-icon" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
     <span class="logo">Tagger</span>
     <div class="search-wrap">
-      <input id="search" class="search-input" type="search" placeholder="Search tracks…" aria-label="Search tracks" autocomplete="off" />
+      <input id="search" class="search-input" type="search" placeholder="Search tracks… or year >= 2000 AND genre = 'Rock'" aria-label="Search tracks" autocomplete="off"
+        title="Plain words: full-text search.&#10;Advanced (SQL-like): field op value, combined with AND / OR / NOT and parentheses.&#10;Operators: = != < <= > >= LIKE, IN (…), BETWEEN … AND …, IS [NOT] NULL&#10;Fields: title artist album album_artist genre year track disc bpm composer comment format bitrate sample_rate duration size path filename directory …&#10;Optional: ORDER BY year DESC, title&#10;Example: year >= 2000 AND year < 2010 AND artist LIKE 'The %'" />
+      <div id="search-error" class="search-error" role="alert" hidden></div>
     </div>
     <div class="topbar-actions">
       <span id="scan-status" class="scan-status"></span>
