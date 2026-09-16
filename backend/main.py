@@ -20,6 +20,7 @@ from api.auth import router as auth_router
 from api.library import router as library_router
 from api.tags import router as tags_router
 from api.artists import router as artists_router
+from api.albums import router as albums_router
 from api.jobs import router as jobs_router
 from api.config import router as config_router
 from api.fs import router as fs_router
@@ -94,6 +95,7 @@ app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(library_router, prefix="/api/library", tags=["library"])
 app.include_router(tags_router, prefix="/api/tags", tags=["tags"])
 app.include_router(artists_router, prefix="/api/artists", tags=["artists"])
+app.include_router(albums_router, prefix="/api/albums", tags=["albums"])
 app.include_router(jobs_router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(config_router, prefix="/api/config", tags=["config"])
 app.include_router(fs_router, prefix="/api/fs", tags=["fs"])

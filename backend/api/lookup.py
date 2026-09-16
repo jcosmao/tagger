@@ -7,8 +7,13 @@ import shutil
 import urllib.error
 import urllib.request
 
-from fastapi import APIRouter, HTTPException
+from typing import Optional
 
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from core import album_match
+from core.artist_genres import MusicBrainzError
 from core.config import settings
 from core.database import db
 from core.inference import infer_tags_from_path
@@ -86,6 +91,32 @@ async def search_track(track_id: int):
         {k: v for k, v in dataclasses.asdict(r).items() if k != "raw"}
         for r in results
     ]
+
+
+class AlbumLookup(BaseModel):
+    track_ids: list[int]
+    release_id: Optional[str] = None
+
+
+@router.post("/album")
+async def lookup_album(req: AlbumLookup):
+    """
+    Tag an album's tracks from one MusicBrainz release: two requests for the
+    whole album instead of a lookup per track. Tracks that can't be paired
+    with the release come back in `unmatched`.
+    """
+    if not req.track_ids:
+        raise HTTPException(400, "No track IDs provided")
+    if req.release_id and not _UUID_RE.match(req.release_id):
+        raise HTTPException(400, "Invalid release id")
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM tracks WHERE id IN ({','.join('?' * len(req.track_ids))})", req.track_ids
+        ).fetchall()
+    try:
+        return await asyncio.to_thread(album_match.lookup_album, [dict(r) for r in rows], req.release_id)
+    except MusicBrainzError as exc:
+        raise HTTPException(502, f"MusicBrainz: {exc}")
 
 
 @router.get("/releases/{mb_track_id}")

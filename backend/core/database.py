@@ -157,6 +157,15 @@ def init_db() -> None:
                 source         TEXT                -- musicbrainz | discogs | itunes
             );
 
+            CREATE TABLE IF NOT EXISTS album_years (
+                key        TEXT PRIMARY KEY,   -- "mb:<release id>", else casefolded artist + album
+                year       TEXT,               -- original release year, NULL when not found
+                source     TEXT,               -- musicbrainz | discogs | itunes
+                mbid       TEXT,               -- MusicBrainz release group
+                error      TEXT,
+                fetched_at REAL NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL

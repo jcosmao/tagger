@@ -110,7 +110,7 @@ export interface ChangeLogEntry {
 
 export interface ScanJob {
   id: string
-  kind: 'scan' | 'unify' | 'undo' | 'retag' | 'fetch'
+  kind: 'scan' | 'unify' | 'undo' | 'retag' | 'fetch' | 'years'
   status: 'pending' | 'running' | 'done' | 'error'
   started_at: number | null
   finished_at: number | null
@@ -155,6 +155,13 @@ export interface LookupResult {
   source: string
 }
 
+export interface AlbumLookup {
+  release: { id: string; title: string; artist: string | null; date: string | null; country: string | null; year: string | null; track_count: number } | null
+  candidates: { id: string; title: string; date: string | null; country: string | null; track_count: number | null; status: string | null }[]
+  matches: { track_id: number; score: number; update: Partial<Record<keyof LookupResult, string>> }[]
+  unmatched: number[]
+}
+
 export interface MbRelease {
   mb_album_id: string | null
   album: string | null
@@ -184,6 +191,20 @@ export interface AlbumInconsistency {
   artist: string | null
   track_count: number
   changes: Partial<Record<UnifyField, { before: Record<string, number>; after: string; changed: number }>>
+}
+
+export interface AlbumYear {
+  directory: string
+  artist: string
+  album: string
+  mb_album_id: string | null
+  track_count: number
+  years: Record<string, number>
+  fetched: boolean
+  found_year: string | null
+  source: 'musicbrainz' | 'discogs' | 'itunes' | null
+  error: string | null
+  changed: number
 }
 
 export interface TreeEntry {
@@ -303,6 +324,14 @@ export const api = {
       request<{ job_id: string }>('POST', '/api/artists/retag', { artist, genres, mode, by }),
   },
 
+  albums: {
+    years: () => request<AlbumYear[]>('GET', '/api/albums/years'),
+    fetchYears: (refresh = false) =>
+      request<{ job_id: string }>('POST', '/api/albums/years/fetch', { refresh }),
+    applyYears: (directories: string[]) =>
+      request<{ job_id: string }>('POST', '/api/albums/years/apply', { directories }),
+  },
+
   jobs: {
     startScan: (directory?: string) =>
       request<{ job_id: string; directory: string | null }>(
@@ -327,6 +356,8 @@ export const api = {
   lookup: {
     search: (trackId: number) =>
       request<LookupResult[]>('POST', `/api/lookup/search/${trackId}`),
+    album: (trackIds: number[], releaseId?: string) =>
+      request<AlbumLookup>('POST', '/api/lookup/album', { track_ids: trackIds, release_id: releaseId }),
     infer: (trackId: number) =>
       request<LookupResult | null>('POST', `/api/lookup/infer/${trackId}`),
     releases: (mbTrackId: string) =>

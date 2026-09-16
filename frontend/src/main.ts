@@ -1,5 +1,5 @@
 import './style.css'
-import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, ApiError, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, AlbumYear, ApiError, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
 import { state, PAGE_SIZE, TAG_FIELDS, ALWAYS_COLS, DirNode, SidebarMode, saveColPrefs } from './state'
@@ -712,6 +712,13 @@ async function renderQualityPanel() {
   if (!anyIssues) {
     qualityListEl.innerHTML = '<li class="nav-item quality-all-good">✓ All tags look good</li>'
   }
+
+  const years = document.createElement('li')
+  years.className = 'nav-item quality-issue-item'
+  years.dataset.issue = 'album_years'
+  years.title = 'Fetch original release years per album from MusicBrainz (Discogs/iTunes as fallback)'
+  years.innerHTML = '<span class="nav-icon">📅</span><span class="nav-label">Album years…</span>'
+  qualityListEl.appendChild(years)
 }
 
 // ─── Album grid ───────────────────────────────────────────────────────────────
@@ -1462,11 +1469,42 @@ async function applyProposals(proposals: FixProposal[]) {
   await refreshUndoButton()
 }
 
+// Tracks of one album (same folder and album tag) are looked up together: one
+// MusicBrainz release for the whole album instead of a search per track, so
+// every track lands on the same edition. Tracks it can't place fall back to
+// the per-track lookup.
 async function gatherProposals(tracks: Track[], setLabel: (s: string) => void): Promise<FixProposal[]> {
   const proposals: FixProposal[] = []
-  for (let i = 0; i < tracks.length; i++) {
-    setLabel(tracks.length === 1 ? 'Looking up…' : `Looking up ${i + 1}/${tracks.length}…`)
-    try { const p = await buildProposal(tracks[i]); if (p) proposals.push(p) } catch { /* skip */ }
+  const albums = new Map<string, Track[]>()
+  const singles: Track[] = []
+  for (const t of tracks) {
+    if (!t.album) { singles.push(t); continue }
+    const key = `${t.directory}\u0000${t.album.toLowerCase()}`
+    albums.set(key, [...(albums.get(key) ?? []), t])
+  }
+
+  let done = 0
+  for (const group of albums.values()) {
+    if (group.length < 2) { singles.push(...group); continue }
+    setLabel(`Looking up album ${group[0].album}…`)
+    try {
+      const res = await api.lookup.album(group.map(t => t.id))
+      const byId = new Map(group.map(t => [t.id, t]))
+      const r = res.release
+      const source = r ? `MusicBrainz album · ${r.title}${r.year ? ` (${r.year}${r.country ? ', ' + r.country : ''})` : ''}` : ''
+      for (const m of res.matches) {
+        proposals.push({ track: byId.get(m.track_id)!, score: m.score, source, update: m.update as Record<string, string> })
+      }
+      singles.push(...res.unmatched.map(id => byId.get(id)!))
+    } catch {
+      singles.push(...group)
+    }
+    done += group.length
+  }
+
+  for (let i = 0; i < singles.length; i++) {
+    setLabel(tracks.length === 1 ? 'Looking up…' : `Looking up ${done + i + 1}/${tracks.length}…`)
+    try { const p = await buildProposal(singles[i]); if (p) proposals.push(p) } catch { /* skip */ }
   }
   return proposals
 }
@@ -1525,7 +1563,7 @@ function renderScanStatus() {
   const job = state.scanJob
   if (!job || job.status === 'done' || job.status === 'error') { scanStatusEl.textContent = ''; return }
   const pct = job.total ? Math.round((job.scanned / job.total) * 100) : 0
-  const verb = { scan: 'Scanning', unify: 'Unifying albums', undo: 'Undoing', retag: 'Retagging', fetch: 'Fetching' }[job.kind] ?? 'Working'
+  const verb = { scan: 'Scanning', unify: 'Unifying albums', undo: 'Undoing', retag: 'Retagging', fetch: 'Fetching', years: 'Fetching years' }[job.kind] ?? 'Working'
   scanStatusEl.textContent = job.status !== 'running'
     ? `${verb}…`
     : job.kind === 'undo'
@@ -1721,7 +1759,7 @@ function pollScan(jobId: string) {
 async function onJobFinished(job: ScanJob) {
   const plural = (n: number) => `${n.toLocaleString()} track${n !== 1 ? 's' : ''}`
   if (job.status === 'error') {
-    toast(`${{ scan: 'Scan', unify: 'Album unify', undo: 'Undo', retag: 'Retag', fetch: 'Fetch' }[job.kind] ?? 'Job'} failed: ${job.error}`, 'error')
+    toast(`${{ scan: 'Scan', unify: 'Album unify', undo: 'Undo', retag: 'Retag', fetch: 'Fetch', years: 'Album years' }[job.kind] ?? 'Job'} failed: ${job.error}`, 'error')
   } else if (job.kind === 'scan') {
     toast(`Scan complete — ${job.scanned} tracks indexed`, 'success')
   } else if (job.kind === 'unify' || job.kind === 'retag') {
@@ -1746,7 +1784,7 @@ async function onJobFinished(job: ScanJob) {
 async function resumeRunningJob() {
   try {
     const running = (await api.jobs.list())
-      .find(j => (j.status === 'pending' || j.status === 'running') && j.kind !== 'fetch')
+      .find(j => (j.status === 'pending' || j.status === 'running') && j.kind !== 'fetch' && j.kind !== 'years')
     if (running) { scanBtn.disabled = true; pollScan(running.id) }
   } catch { /* not critical */ }
 }
@@ -1891,6 +1929,188 @@ async function showUnifyAlbums() {
       applyBtn.disabled = false
     }
   })
+}
+
+// ─── Album years ──────────────────────────────────────────────────────────────
+
+const YEAR_SOURCES = { musicbrainz: 'MusicBrainz', discogs: 'Discogs', itunes: 'iTunes' }
+
+async function showAlbumYears() {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-card unify-card">
+      <div class="modal-title">Album years</div>
+      <div class="modal-hint">Original release year of each album, one lookup per album: MusicBrainz release group (direct when the album is tagged with a release id), else Discogs master, else iTunes. Results are cached — fetching again only asks about new or failed albums.</div>
+      <div class="unify-toolbar">
+        <button type="button" class="btn btn-ghost btn-sm" id="years-fetch">Fetch missing</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="years-refetch">Refetch all</button>
+        <span class="modal-hint" id="years-progress"></span>
+      </div>
+      <div class="modal-hint" id="years-summary">Loading…</div>
+      <div class="unify-toolbar">
+        <input id="years-filter" class="nav-filter" type="search" placeholder="Filter albums…" autocomplete="off" />
+        <label class="unify-field"><input type="checkbox" id="years-changes" checked /> Only changes</label>
+        <button type="button" class="btn btn-ghost btn-sm" id="years-all">All</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="years-none">None</button>
+      </div>
+      <ul class="unify-list" id="years-list"></ul>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="years-cancel">Close</button>
+        <button type="button" class="btn btn-primary" id="years-apply" disabled>Apply</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  let timer: ReturnType<typeof setInterval> | null = null
+  const close = () => {
+    if (timer) clearInterval(timer)
+    overlay.remove()
+    document.removeEventListener('keydown', onKey, true)
+  }
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }
+  document.addEventListener('keydown', onKey, true)
+  overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+  overlay.querySelector('#years-cancel')!.addEventListener('click', close)
+
+  const $ = <T extends HTMLElement>(sel: string) => overlay.querySelector<T>(sel)!
+  const listEl = $<HTMLElement>('#years-list')
+  const summaryEl = $<HTMLElement>('#years-summary')
+  const progressEl = $<HTMLElement>('#years-progress')
+  const applyBtn = $<HTMLButtonElement>('#years-apply')
+  const filterEl = $<HTMLInputElement>('#years-filter')
+  const changesEl = $<HTMLInputElement>('#years-changes')
+  const fetchBtns = [$<HTMLButtonElement>('#years-fetch'), $<HTMLButtonElement>('#years-refetch')]
+
+  let albums: AlbumYear[] = []
+  const unchecked = new Set<string>()  // directories the user deselected, kept across reloads
+
+  const status = (a: AlbumYear) => {
+    const before = Object.entries(a.years)
+      .map(([v, n]) => `<span class="unify-before">${esc(v || '(empty)')} <b>×${n}</b></span>`).join('')
+    if (!a.fetched) return `${before} <span class="unify-arrow">· not fetched</span>`
+    if (!a.found_year) return `${before} <span class="unify-arrow" title="${esc(a.error ?? '')}">· ${a.error ? 'lookup failed' : 'not found'}</span>`
+    const src = a.source ? ` <span class="unify-arrow">${YEAR_SOURCES[a.source]}</span>` : ''
+    return a.changed
+      ? `${before} <span class="unify-arrow">→</span> <span class="unify-after">${esc(a.found_year)}</span>${src}`
+      : `${before} <span class="unify-arrow">✓</span>${src}`
+  }
+
+  const render = () => {
+    const needle = filterEl.value.trim().toLowerCase()
+    const onlyChanges = changesEl.checked
+    listEl.innerHTML = ''
+    const frag = document.createDocumentFragment()
+    let shown = 0, checked = 0, tracks = 0
+    for (const a of albums) {
+      if (onlyChanges && !a.changed) continue
+      if (needle && !`${a.artist} ${a.album} ${a.directory}`.toLowerCase().includes(needle)) continue
+      shown++
+      const on = a.changed > 0 && !unchecked.has(a.directory)
+      if (on) { checked++; tracks += a.changed }
+      const li = document.createElement('li')
+      li.className = 'unify-album'
+      li.dataset.dir = a.directory
+      li.innerHTML = `
+        <label class="unify-album-head">
+          <input type="checkbox" ${on ? 'checked' : ''} ${a.changed ? '' : 'disabled'} />
+          <span class="unify-album-name" title="${esc(a.directory)}">${esc(a.artist || '?')} — ${esc(a.album)}</span>
+          <span class="nav-count">${a.track_count} track${a.track_count !== 1 ? 's' : ''}</span>
+        </label>
+        <div class="unify-change"><span class="unify-name">year</span> ${status(a)}</div>
+      `
+      frag.appendChild(li)
+    }
+    listEl.appendChild(frag)
+    const pending = albums.filter(a => !a.fetched).length
+    const found = albums.filter(a => a.changed).length
+    summaryEl.textContent = `${albums.length.toLocaleString()} albums · ${pending.toLocaleString()} not fetched · ${found.toLocaleString()} with a different year · ${shown.toLocaleString()} shown`
+    applyBtn.disabled = checked === 0
+    applyBtn.textContent = checked
+      ? `Apply to ${checked.toLocaleString()} album${checked !== 1 ? 's' : ''} (${tracks.toLocaleString()} tracks)`
+      : 'Apply'
+  }
+
+  const reload = async () => {
+    try {
+      albums = await api.albums.years()
+      render()
+    } catch (e) {
+      summaryEl.textContent = `Failed to load: ${e}`
+    }
+  }
+
+  const poll = (jobId: string) => {
+    fetchBtns.forEach(b => { b.disabled = true })
+    let ticks = 0
+    const tick = async () => {
+      try {
+        const job = await api.jobs.get(jobId)
+        progressEl.textContent = job.total ? `Fetching… ${job.scanned}/${job.total}` : 'Fetching…'
+        if (job.status === 'done' || job.status === 'error') {
+          clearInterval(timer!); timer = null
+          fetchBtns.forEach(b => { b.disabled = false })
+          progressEl.textContent = job.status === 'error' ? `Fetch failed: ${job.error}` : ''
+          await reload()
+        } else if (++ticks % 5 === 0) {
+          await reload()  // show results as they come in
+        }
+      } catch (e) {
+        clearInterval(timer!); timer = null
+        fetchBtns.forEach(b => { b.disabled = false })
+        progressEl.textContent = `Polling failed: ${e}`
+      }
+    }
+    timer = setInterval(tick, 2000)
+    tick()
+  }
+
+  const startFetch = async (refresh: boolean) => {
+    try {
+      poll((await api.albums.fetchYears(refresh)).job_id)
+    } catch (e) {
+      toast(e instanceof ApiError && e.status === 409 ? 'Album years are already being fetched' : `Fetch failed: ${e}`, 'error')
+    }
+  }
+  fetchBtns[0].addEventListener('click', () => startFetch(false))
+  fetchBtns[1].addEventListener('click', () => startFetch(true))
+
+  filterEl.addEventListener('input', render)
+  changesEl.addEventListener('change', render)
+  listEl.addEventListener('change', e => {
+    const input = e.target as HTMLInputElement
+    const dir = input.closest<HTMLElement>('.unify-album')!.dataset.dir!
+    if (input.checked) unchecked.delete(dir); else unchecked.add(dir)
+    render()
+  })
+  const setVisible = (on: boolean) => {
+    listEl.querySelectorAll<HTMLElement>('.unify-album').forEach(li => {
+      if (on) unchecked.delete(li.dataset.dir!); else unchecked.add(li.dataset.dir!)
+    })
+    render()
+  }
+  $('#years-all').addEventListener('click', () => setVisible(true))
+  $('#years-none').addEventListener('click', () => setVisible(false))
+
+  applyBtn.addEventListener('click', async () => {
+    const directories = albums.filter(a => a.changed && !unchecked.has(a.directory)).map(a => a.directory)
+    applyBtn.disabled = true
+    try {
+      const { job_id } = await api.albums.applyYears(directories)
+      close()
+      scanBtn.disabled = true
+      pollScan(job_id)
+    } catch (e) {
+      toast(e instanceof ApiError && e.status === 409 ? 'Another job is already running' : `Apply failed: ${e}`, 'error')
+      applyBtn.disabled = false
+    }
+  })
+
+  await reload()
+  try {
+    const running = (await api.jobs.list()).find(j => j.kind === 'years' && (j.status === 'pending' || j.status === 'running'))
+    if (running) poll(running.id)
+  } catch { /* not critical */ }
 }
 
 // ─── Tag saving ───────────────────────────────────────────────────────────────
@@ -2788,6 +3008,7 @@ qualityListEl.addEventListener('click', async (e) => {
   if (!li?.dataset.issue) return
   const issue = li.dataset.issue
   if (issue === 'inconsistent_albums') { await showUnifyAlbums(); return }
+  if (issue === 'album_years') { await showAlbumYears(); return }
   clearSearch()
   state.selectedIssue = state.selectedIssue === issue ? null : issue
   qualityToolbar.hidden = !state.selectedIssue || state.selectedIssue === 'missing_files'

@@ -40,10 +40,10 @@ def get_job(job_id: str) -> dict | None:
 def active_job(kind: str | None = None) -> dict | None:
     """
     Return the running/pending job that writes the library (scan, unify, retag,
-    undo), or with `kind`, the running job of that kind. Genre fetch jobs only
-    fill a cache, so they don't count as library jobs.
+    undo), or with `kind`, the running job of that kind. Genre and album year
+    fetch jobs only fill a cache, so they don't count as library jobs.
     """
-    clause, params = ("kind = ?", (kind,)) if kind else ("kind != 'fetch'", ())
+    clause, params = ("kind = ?", (kind,)) if kind else ("kind NOT IN ('fetch', 'years')", ())
     with db() as conn:
         row = conn.execute(
             f"SELECT * FROM scan_jobs WHERE status IN ('pending', 'running') AND {clause} "
@@ -218,6 +218,45 @@ async def run_decade_genres_job(job_id: str) -> None:
         return plans
 
     await run_write_job(job_id, plan, "Added decade genres")
+
+
+async def run_album_years_job(job_id: str, directories: list[str] | None, refresh: bool = False) -> None:
+    """Fetch the original year of every album not cached yet or that failed (or all, with refresh)."""
+    from core import album_years
+    from core.database import get_conn
+
+    def work() -> int:
+        conn = get_conn()
+        try:
+            cache = album_years.cached(conn)
+            todo: dict[str, dict] = {}
+            for a in album_years.library_albums(conn, directories):
+                hit = cache.get(a["key"])
+                if refresh or not hit or hit["error"]:
+                    todo.setdefault(a["key"], a)  # the same album in two folders is asked once
+            _update_job(job_id, total=len(todo), scanned=0)
+            for i, (key, a) in enumerate(todo.items(), start=1):
+                album_years.store(conn, key, album_years.fetch_year(a["artist"], a["album"], a["mb_album_id"]))
+                conn.commit()
+                _update_job(job_id, scanned=i)
+            return len(todo)
+        finally:
+            conn.close()
+
+    _update_job(job_id, status="running")
+    try:
+        done = await asyncio.to_thread(work)
+        _update_job(job_id, status="done", finished_at=time.time(), scanned=done)
+    except Exception as exc:
+        _update_job(job_id, status="error", finished_at=time.time(), error=str(exc))
+        logger.exception("album years %s failed: %s", job_id, exc)
+
+
+async def run_apply_album_years_job(job_id: str, directories: list[str]) -> None:
+    """Write each album's fetched year to its tracks."""
+    from core.album_years import year_updates
+
+    await run_write_job(job_id, lambda conn: year_updates(conn, directories), "Set album years")
 
 
 async def run_fetch_genres_job(job_id: str, refresh: bool = False, by: str = "album_artist") -> None:
