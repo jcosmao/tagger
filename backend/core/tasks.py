@@ -205,14 +205,15 @@ async def run_retag_artist_job(job_id: str, artist: str, genres: list[str], mode
 
 
 async def run_fetch_genres_job(job_id: str, refresh: bool = False, by: str = "album_artist") -> None:
-    """Fetch MusicBrainz genres for every artist not cached yet (or all, with refresh)."""
+    """Fetch genres for every artist not cached yet or that failed (or all, with refresh)."""
     from core.artist_genres import GROUPINGS, fetch_artist
     from core.database import get_conn
 
     def work() -> int:
         conn = get_conn()
         try:
-            known = {r[0] for r in conn.execute("SELECT artist FROM artist_genres")}
+            # Rows that failed (every source errored) are retried, not skipped.
+            known = {r[0] for r in conn.execute("SELECT artist FROM artist_genres WHERE error IS NULL")}
             key = GROUPINGS[by]
             artists = [r[0] for r in conn.execute(
                 f"SELECT DISTINCT {key} FROM tracks WHERE {key} != '' ORDER BY 1 COLLATE NOCASE")]

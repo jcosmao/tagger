@@ -1,5 +1,8 @@
 """Artist view: MusicBrainz genre fetching (HTTP mocked), cache, and genre retagging."""
+import io
+import json
 import time
+import urllib.error
 
 import pytest
 
@@ -49,6 +52,7 @@ class FakeMB:
 def mb(monkeypatch):
     fake = FakeMB()
     monkeypatch.setattr(ag, "_mb_get", fake)
+    monkeypatch.setattr(ag, "_fallbacks", lambda: [])  # no network in tests
     return fake
 
 
@@ -120,6 +124,121 @@ def test_fetch_error_is_recorded(temp_db, tmp_path, mb):
     with db() as conn:
         row = ag.fetch_artist(conn, "Nirvana", mbid="missing")
     assert "404" in row["error"]
+
+
+def test_fallback_used_when_musicbrainz_fails(temp_db, tmp_path, mb, monkeypatch):
+    asked = []
+
+    def discogs(artist):
+        asked.append("discogs")
+        raise ag.ProviderError("503 Service Unavailable")
+
+    def itunes(artist):
+        asked.append("itunes")
+        return [{"name": "Alternative", "count": 5}]
+
+    monkeypatch.setattr(ag, "_fallbacks", lambda: [("discogs", discogs), ("itunes", itunes)])
+    with db() as conn:
+        row = ag.fetch_artist(conn, "Nirvana", mbid="missing")
+    assert asked == ["discogs", "itunes"]
+    assert row["source"] == "itunes" and row["error"] is None
+    assert row["genres"] == [{"name": "Alternative", "count": 5}]
+
+
+def test_fallback_used_when_musicbrainz_has_no_genres(temp_db, tmp_path, mb, monkeypatch):
+    mb.artists["dp"]["genres"] = []
+    monkeypatch.setattr(ag, "_fallbacks", lambda: [("discogs", lambda a: [{"name": "House", "count": 3}])])
+    with db() as conn:
+        row = ag.fetch_artist(conn, "Daft Punk")
+    assert row["mbid"] == "dp" and row["source"] == "discogs"
+    assert row["genres"] == [{"name": "House", "count": 3}]
+
+
+def test_all_sources_failing_records_every_error(temp_db, tmp_path, mb, monkeypatch):
+    def down(artist):
+        raise ag.ProviderError("timed out")
+
+    monkeypatch.setattr(ag, "_fallbacks", lambda: [("itunes", down)])
+    with db() as conn:
+        row = ag.fetch_artist(conn, "Nirvana", mbid="missing")
+    assert row["error"] == "MusicBrainz: 404 Not Found; iTunes: timed out"
+
+
+def test_discogs_counts_genres_and_styles_of_exact_artist(monkeypatch):
+    results = [
+        {"title": "Air (2) - Moon Safari", "genre": ["Electronic"], "style": ["Downtempo", "Ambient"]},
+        {"title": "Air* - Talkie Walkie", "genre": ["Electronic"], "style": ["Downtempo"]},
+        {"title": "Airbag - Other", "genre": ["Rock"], "style": ["Prog Rock"]},
+    ]
+    monkeypatch.setattr(ag, "_get_json", lambda url, headers=None, throttle=False: {"results": results})
+    assert ag.discogs_genres("Air", "tok") == [
+        {"name": "Downtempo", "count": 2}, {"name": "Electronic", "count": 2}, {"name": "Ambient", "count": 1}]
+
+
+class _Resp:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return io.BytesIO(json.dumps(self.body).encode())
+
+    def __exit__(self, *a):
+        return False
+
+
+def _http_error(code, retry_after=None):
+    headers = {"Retry-After": retry_after} if retry_after else {}
+    return urllib.error.HTTPError("u", code, "Service Temporarily Unavailable", headers, None)
+
+
+def test_get_json_retries_transient_errors_with_backoff(monkeypatch):
+    responses = [_http_error(503), _http_error(429, "7"), _Resp({"ok": 1})]
+    sleeps = []
+
+    def urlopen(req, timeout):
+        r = responses.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(ag.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(ag.time, "sleep", sleeps.append)
+    monkeypatch.setattr(ag.random, "uniform", lambda a, b: 1.0)
+    assert ag._get_json("http://x") == {"ok": 1}
+    assert sleeps == [1.5, 7.0]  # exponential backoff, Retry-After wins when longer
+
+
+def test_get_json_does_not_retry_client_errors(monkeypatch):
+    calls = []
+
+    def urlopen(req, timeout):
+        calls.append(1)
+        raise _http_error(404)
+
+    monkeypatch.setattr(ag.urllib.request, "urlopen", urlopen)
+    with pytest.raises(ag.ProviderError, match="404"):
+        ag._get_json("http://x")
+    assert len(calls) == 1
+
+
+def test_musicbrainz_cooldown_after_giving_up(monkeypatch):
+    calls = []
+
+    def failing(url, headers=None, throttle=False):
+        calls.append(url)
+        raise ag.ProviderError("503 Service Temporarily Unavailable")
+
+    monkeypatch.setattr(ag, "_get_json", failing)
+    ag.reset_musicbrainz_cooldown()
+    with pytest.raises(ag.MusicBrainzError, match="503"):
+        ag._mb_get("artist/x", {})
+    with pytest.raises(ag.MusicBrainzError, match="later"):
+        ag._mb_get("artist/x", {})  # skipped, no request
+    assert len(calls) == 1
+    ag.reset_musicbrainz_cooldown()
+    with pytest.raises(ag.MusicBrainzError, match="503"):
+        ag._mb_get("artist/x", {})
+    ag.reset_musicbrainz_cooldown()
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────

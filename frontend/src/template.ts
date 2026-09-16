@@ -113,7 +113,7 @@ export const APP_HTML = `
     <aside class="sidebar">
       <div class="sidebar-tabs">
         <button class="stab active" data-mode="tags" title="Grouped by the artist tag">Artist</button>
-        <button class="stab" data-mode="artists" title="Grouped by album artist (else artist), with MusicBrainz genres">Album Artist</button>
+        <button class="stab" data-mode="artists" title="Grouped by album artist (else artist), with MusicBrainz genres (Discogs/iTunes as fallback)">Album Artist</button>
         <button class="stab" data-mode="genres">Genres</button>
         <button class="stab" data-mode="files">Files</button>
         <button class="stab" data-mode="quality">Quality</button>
@@ -128,7 +128,7 @@ export const APP_HTML = `
       <nav id="panel-artists" class="sidebar-panel" hidden>
         <div class="nav-toolbar">
           <input id="artist-filter" class="nav-filter" type="search" placeholder="Filter artists…" autocomplete="off" />
-          <button id="fetch-all-btn" class="btn btn-ghost btn-sm nav-toolbar-fixed" title="Fetch MusicBrainz genres for every artist not fetched yet (about 1–2 s per artist)">Fetch all</button>
+          <button id="fetch-all-btn" class="btn btn-ghost btn-sm nav-toolbar-fixed" title="Fetch genres (MusicBrainz, else Discogs/iTunes) for every artist not fetched yet or that failed (about 1–2 s per artist)">Fetch all</button>
         </div>
         <div id="fetch-all-status" class="nav-status" hidden></div>
         <ul id="artist-key-list" class="nav-list"></ul>

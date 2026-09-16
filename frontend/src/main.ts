@@ -217,7 +217,7 @@ function renderArtistsPanel() {
       li.dataset.artistKey = a.artist
       li.innerHTML = `
         <span class="nav-label">${esc(a.artist || '(Unknown artist)')}</span>
-        ${a.fetched ? '<span class="nav-fetched" title="MusicBrainz genres fetched">●</span>' : ''}
+        ${a.fetched ? '<span class="nav-fetched" title="Genres fetched">●</span>' : ''}
         <span class="nav-count">${a.track_count}</span>
       `
       artistKeyListEl.insertBefore(li, more)
@@ -276,6 +276,13 @@ async function loadArtistDetail() {
   }
 }
 
+// Where fetched genres came from: MusicBrainz, else a fallback when it failed or had none.
+const GENRE_SOURCES: Record<string, { label: string; count: string }> = {
+  musicbrainz: { label: 'MusicBrainz', count: 'MusicBrainz votes' },
+  discogs: { label: 'Discogs', count: 'Discogs releases' },
+  itunes: { label: 'iTunes', count: 'iTunes albums' },
+}
+
 // Genres picked for the next Replace/Add: MusicBrainz suggestions plus custom
 // ones typed in, kept while the same artist stays selected.
 let agPicks: { key: string; custom: string[]; checked: Set<string> | null } = { key: '', custom: [], checked: null }
@@ -299,13 +306,15 @@ function renderArtistGenres() {
 
   let mbStatus: string
   const mb = d.mb
-  const suggestions = mb?.mbid && !mb.error ? mb.genres : []
+  const source = GENRE_SOURCES[mb?.source ?? 'musicbrainz'] ?? GENRE_SOURCES.musicbrainz
+  const fallback = !!mb && !!mb.source && mb.source !== 'musicbrainz'
+  const suggestions = mb && !mb.error ? mb.genres : []
   if (!mb) {
     mbStatus = `<span class="ag-muted">Not fetched yet.</span>`
   } else if (mb.error) {
-    mbStatus = `<span class="ag-error">MusicBrainz error: ${esc(mb.error)}</span>`
+    mbStatus = `<span class="ag-error">Fetch failed — ${esc(mb.error)}</span>`
   } else if (!mb.mbid) {
-    mbStatus = `<span class="ag-muted">No matching artist on MusicBrainz.</span>`
+    mbStatus = `<span class="ag-muted">No matching artist on MusicBrainz${fallback ? '' : ', nor genres elsewhere'}.</span>`
   } else {
     const label = (c: { name: string | null; disambiguation: string | null }) =>
       esc(c.name ?? '') + (c.disambiguation ? ` (${esc(c.disambiguation)})` : '')
@@ -313,8 +322,9 @@ function renderArtistGenres() {
       ? `<select class="ag-candidates" title="Pick the right artist">${mb.candidates.map(c =>
           `<option value="${esc(c.id)}"${c.id === mb.mbid ? ' selected' : ''}>${label(c)}</option>`).join('')}</select>`
       : `<a href="https://musicbrainz.org/artist/${esc(mb.mbid)}" target="_blank" rel="noopener">${label({ name: mb.mb_name, disambiguation: mb.disambiguation })}</a>`
-    if (!suggestions.length) mbStatus += ' <span class="ag-muted">— no genres on MusicBrainz.</span>'
+    if (!suggestions.length) mbStatus += ' <span class="ag-muted">— no genres on MusicBrainz nor elsewhere.</span>'
   }
+  if (fallback && !mb!.error) mbStatus += ` <span class="ag-muted">— genres from ${source.label}.</span>`
 
   // First render for this artist: pre-check suggestions with at least half the top votes.
   if (!agPicks.checked) {
@@ -324,7 +334,7 @@ function renderArtistGenres() {
   const picks = [
     ...suggestions.map(g => `
       <label class="ag-chip ag-pick"><input type="checkbox" value="${esc(g.label)}"${agPicks.checked!.has(g.label) ? ' checked' : ''} />
-      ${esc(g.label)} <b title="MusicBrainz votes">${g.count}</b></label>`),
+      ${esc(g.label)} <b title="${source.count}">${g.count}</b></label>`),
     ...agPicks.custom.map(c => `
       <label class="ag-chip ag-pick ag-custom-chip"><input type="checkbox" value="${esc(c)}"${agPicks.checked!.has(c) ? ' checked' : ''} />
       ${esc(c)} <button class="ag-x" data-ag="drop-custom" data-genre="${esc(c)}" title="Drop this custom genre">✕</button></label>`),
@@ -334,10 +344,10 @@ function renderArtistGenres() {
     <div class="ag-head">
       <span class="ag-title">${esc(d.artist || '(Unknown artist)')}</span>
       <span class="ag-muted">${plural(d.track_count)}</span>
-      <button class="btn btn-ghost btn-sm" data-ag="fetch">${mb ? 'Refresh MusicBrainz' : 'Fetch MusicBrainz genres'}</button>
+      <button class="btn btn-ghost btn-sm" data-ag="fetch">${mb ? 'Refresh genres' : 'Fetch genres'}</button>
     </div>
     <div class="ag-row"><span class="ag-label">On tracks</span><div class="ag-chips">${current}</div></div>
-    <div class="ag-row"><span class="ag-label">MusicBrainz</span><div class="ag-mb">${mbStatus}</div></div>
+    <div class="ag-row"><span class="ag-label">Suggested</span><div class="ag-mb">${mbStatus}</div></div>
     <div class="ag-row"><span class="ag-label">New genres</span>
       <div class="ag-chips">
         ${picks}
@@ -409,8 +419,8 @@ async function fetchArtistGenres(mbid?: string) {
   try {
     const detail = await api.artists.fetch(target.name, target.by, mbid)
     if (!sameArtist(genreArtist(), target)) return
-    if (agPicks.checked && detail.mb?.mbid !== state.artistDetail?.mb?.mbid) {
-      // Different MusicBrainz artist: keep custom picks, re-tick its suggestions.
+    if (agPicks.checked && (detail.mb?.mbid !== state.artistDetail?.mb?.mbid || detail.mb?.source !== state.artistDetail?.mb?.source)) {
+      // Different MusicBrainz artist or genre source: keep custom picks, re-tick its suggestions.
       agPicks.checked = new Set(agPicks.custom.filter(c => agPicks.checked!.has(c)))
       const top = detail.mb?.genres[0]?.count ?? 0
       detail.mb?.genres.filter(g => g.count * 2 >= top).forEach(g => agPicks.checked!.add(g.label))

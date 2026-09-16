@@ -1,4 +1,4 @@
-"""Artist view: album artists, their MusicBrainz genres, and genre retagging."""
+"""Artist view: album artists, their fetched genres (MusicBrainz, else fallbacks), and genre retagging."""
 from __future__ import annotations
 
 from collections import Counter
@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
-from core.artist_genres import GROUPINGS, cached, fetch_artist, library_case
+from core.artist_genres import GROUPINGS, cached, fetch_artist, library_case, reset_musicbrainz_cooldown
 from core.database import db
 from core.genres import split_genres
 from core.tasks import active_job, create_job, run_fetch_genres_job, run_retag_artist_job
@@ -86,6 +86,7 @@ def artist_detail(name: str, by: Grouping = "album_artist"):
 @router.post("/fetch")
 def fetch(req: FetchArtist):
     """Fetch (or re-fetch, optionally for a chosen MusicBrainz artist) one artist's genres."""
+    reset_musicbrainz_cooldown()
     with db() as conn:
         fetch_artist(conn, req.artist, req.mbid, req.by)
         return _detail(conn, req.artist, req.by)

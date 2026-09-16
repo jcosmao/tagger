@@ -69,6 +69,7 @@ export interface ArtistDetail {
     candidates: { id: string; name: string; disambiguation: string | null; score: number }[]
     fetched_at: number
     error: string | null
+    source: 'musicbrainz' | 'discogs' | 'itunes' | null
   } | null
 }
 

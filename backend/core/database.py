@@ -43,6 +43,8 @@ def _migrate(conn) -> None:
     ):
         if col not in have:
             conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} {decl}")
+    if "source" not in {r[1] for r in conn.execute("PRAGMA table_info(artist_genres)")}:
+        conn.execute("ALTER TABLE artist_genres ADD COLUMN source TEXT")
     if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(scan_jobs)")}:
         conn.execute("ALTER TABLE scan_jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'scan'")
 
@@ -151,7 +153,8 @@ def init_db() -> None:
                 genres         TEXT NOT NULL,      -- JSON [{name, count}] by votes
                 candidates     TEXT NOT NULL,      -- JSON same-name MusicBrainz artists
                 fetched_at     REAL NOT NULL,
-                error          TEXT
+                error          TEXT,
+                source         TEXT                -- musicbrainz | discogs | itunes
             );
 
             CREATE TABLE IF NOT EXISTS meta (
