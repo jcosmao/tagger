@@ -96,6 +96,7 @@ export interface AppSettings {
   scan_exclude: string[]
   auto_scan_minutes: number
   genre_separators: string[]
+  decade_genre: boolean
   default_music_dir?: string
 }
 
@@ -276,6 +277,7 @@ export const api = {
       request<{ job_id: string }>('POST', '/api/tags/unify-albums', { directories, fields }),
     renameGenre: (oldName: string, newName: string) =>
       request<{ changed: number; errors: unknown[] }>('POST', '/api/tags/genres/rename', { old: oldName, new: newName }),
+    applyDecadeGenres: () => request<{ job_id: string }>('POST', '/api/tags/genres/decades'),
     replaygain: (trackIds: number[], albumMode = false) =>
       request<{ ok: boolean; tool: string | null; processed: number; error?: string }>(
         'POST', '/api/tags/replaygain', { track_ids: trackIds, album_mode: albumMode }),

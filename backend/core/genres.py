@@ -9,6 +9,7 @@ core.tagger.write_tags).
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable
 
 SEP = "; "
@@ -59,6 +60,25 @@ def edit_genres(
     dropped = set(split_genres(list(remove)))
     genres = [g for g in genres if g not in dropped]
     return join_genres([*genres, *split_genres(list(add))])
+
+
+_DECADE = re.compile(r"\d{3}0")
+_YEAR = re.compile(r"\s*(\d{4})")
+
+
+def with_decade_genre(genre: str | None, year: str | None) -> str | None:
+    """
+    Genres with the decade of `year` ("2005" → "2000") added and any other
+    decade genre dropped. Without a readable year the genres are left alone
+    (returns the input unchanged).
+    """
+    m = _YEAR.match(year or "")
+    if not m:
+        return genre
+    decade = str(int(m.group(1)) // 10 * 10)
+    kept = [g for g in split_genres(genre) if not _DECADE.fullmatch(g) or g == decade]
+    new = join_genres([*kept, decade])
+    return genre if new == (genre or "") else new
 
 
 def sync_genre_separators(conn, separators: Iterable[str]) -> None:

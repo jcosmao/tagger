@@ -4,7 +4,7 @@ import subprocess
 import pytest
 
 from core.database import db, init_db
-from core.genres import edit_genres, join_genres, split_genres
+from core.genres import edit_genres, join_genres, split_genres, with_decade_genre
 from core.tagger import read_tags, write_tags
 from tests.conftest import FFMPEG
 
@@ -28,6 +28,15 @@ def test_split_accepts_lists_and_extra_separators():
 
 def test_split_keeps_case_distinct_values():
     assert split_genres("Rock; rock") == ["Rock", "rock"]
+
+
+def test_decade_genre_added_and_stale_decades_dropped():
+    assert with_decade_genre("Rock", "2005") == "Rock; 2000"
+    assert with_decade_genre(None, "1999-03-01") == "1990"
+    assert with_decade_genre("Rock; 1990; Pop", "2012") == "Rock; Pop; 2010"
+    assert with_decade_genre("2000; Rock", "2004") == "2000; Rock"  # already there: unchanged
+    assert with_decade_genre("Rock; 1990", "") == "Rock; 1990"      # no year: left alone
+    assert with_decade_genre("Rock", None) == "Rock"
 
 
 def test_join_is_canonical():
@@ -268,3 +277,35 @@ def test_saving_separators_resplits_index_immediately(client, joined_library):
 def test_separator_setting_splits_into_characters(client):
     saved = client.patch("/api/config", json={"genre_separators": [";/,", " | "]}).json()
     assert saved["genre_separators"] == [";", "/", ",", "|"]
+
+
+def test_decade_genre_setting_applies_on_tag_writes(client, library):
+    a_id, a_path = library["a"]
+    client.patch("/api/tags/" + str(a_id), json={"year": "2005"})
+    assert read_tags(a_path)["genre"] == "Rock; Pop"  # off by default
+
+    client.patch("/api/config", json={"decade_genre": True})
+    client.patch("/api/tags/" + str(a_id), json={"year": "1994"})
+    assert read_tags(a_path)["genre"] == "Rock; Pop; 1990"
+    client.patch("/api/tags/" + str(a_id), json={"year": "2005"})
+    assert read_tags(a_path)["genre"] == "Rock; Pop; 2000"
+
+    c_id, c_path = library["c"]
+    client.post("/api/tags/bulk", json={"track_ids": [c_id], "tags": {"year": "2019"}})
+    assert read_tags(c_path)["genre"] == "Pop; 2010"
+
+
+def test_apply_decade_genres_to_library_is_undoable(client, library):
+    with db() as conn:
+        conn.execute("UPDATE tracks SET year = '1987' WHERE id = ?", (library["b"][0],))
+        conn.execute("UPDATE tracks SET year = '2003' WHERE id = ?", (library["d"][0],))
+    job = client.post("/api/tags/genres/decades").json()
+    assert client.get(f"/api/jobs/{job['job_id']}").json()["status"] == "done"
+
+    by_name = {t["filename"]: t["genre"] for t in client.get("/api/library/tracks").json()["tracks"]}
+    assert by_name == {"a.mp3": "Rock; Pop", "b.mp3": "Rock and Roll; 1980", "c.mp3": "Pop", "d.mp3": "2000"}
+    assert read_tags(library["b"][1])["genre"] == "Rock and Roll; 1980"
+
+    change = client.get("/api/library/history").json()[0]
+    client.post(f"/api/library/history/{change['id']}/undo")
+    assert read_tags(library["b"][1])["genre"] == "Rock and Roll"

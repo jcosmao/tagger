@@ -26,6 +26,7 @@ class AppSettings(BaseModel):
     scan_exclude: list[str] = []       # glob patterns; matching paths are skipped
     auto_scan_minutes: int = 0         # 0 = off; else rescan every N minutes
     genre_separators: list[str] = [";"]  # split legacy joined genres on scan
+    decade_genre: bool = False         # tag writes add the year's decade ("2000") as a genre
 
     @field_validator("genre_separators")
     @classmethod

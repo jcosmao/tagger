@@ -10,8 +10,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from core.database import db
-from core.genres import edit_genres, normalize_genre
-from core.tasks import active_job, create_job, run_unify_job
+from core.genres import edit_genres, normalize_genre, with_decade_genre
+from core.tasks import active_job, create_job, run_decade_genres_job, run_unify_job
 from core.unify import UNIFY_FIELDS
 from core.history import log_change, snapshot
 from core.tagger import write_tags, TAG_FIELDS
@@ -171,18 +171,7 @@ def update_track_tags(track_id: int, update: TagUpdate):
         if not row:
             raise HTTPException(404, "Track not found")
 
-        snap = snapshot(row)
-        write_tags(row["path"], updates)
-
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        conn.execute(
-            f"UPDATE tracks SET {set_clause}, tagged_at = ? WHERE id = ?",
-            [*updates.values(), time.time(), track_id],
-        )
-
-        merged = {**dict(row), **updates}
-        _apply_rename(conn, track_id, row["path"], merged)
-
+        snap = _write_track(conn, row, updates)
         title = row["title"] or row["filename"]
         log_change(conn, "tag_edit", f"Edited tags — {title}", [snap])
 
@@ -248,10 +237,12 @@ def find_replace(req: FindReplace):
             if new_val == val:
                 continue
             snap = snapshot(row)
-            write_tags(row["path"], {req.field: new_val})
+            updates = _with_auto_genres(row, {req.field: new_val})
+            write_tags(row["path"], updates)
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
             conn.execute(
-                f"UPDATE tracks SET {req.field} = ?, tagged_at = ? WHERE id = ?",
-                (new_val, time.time(), row["id"]),
+                f"UPDATE tracks SET {set_clause}, tagged_at = ? WHERE id = ?",
+                [*updates.values(), time.time(), row["id"]],
             )
             snaps.append(snap)
             changed += 1
@@ -309,8 +300,18 @@ def reorganize(req: Reorganize):
     return {"moved": moved, "errors": errors}
 
 
+def _with_auto_genres(row, updates: dict) -> dict:
+    """`updates` plus the decade genre, when that setting is on and it changes the track."""
+    if not load_settings().decade_genre:
+        return updates
+    genre = updates.get("genre", row["genre"])
+    new = with_decade_genre(genre, updates.get("year", row["year"]))
+    return updates if new == genre else {**updates, "genre": new}
+
+
 def _write_track(conn, row, updates: dict) -> dict:
     """Write `updates` to one track's file + row (renaming if enabled); returns its undo snapshot."""
+    updates = _with_auto_genres(row, updates)
     snap = snapshot(row)
     write_tags(row["path"], updates)
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -369,6 +370,17 @@ async def unify_albums(req: UnifyAlbums, background_tasks: BackgroundTasks):
         raise HTTPException(409, {"detail": f"A {running['kind']} job is already running", "job_id": running["id"]})
     job_id = create_job("unify")
     background_tasks.add_task(run_unify_job, job_id, req.directories, req.fields)
+    return {"job_id": job_id}
+
+
+@router.post("/genres/decades")
+async def apply_decade_genres(background_tasks: BackgroundTasks):
+    """Add each track's decade genre across the whole library, as a background job."""
+    running = active_job()
+    if running:
+        raise HTTPException(409, {"detail": f"A {running['kind']} job is already running", "job_id": running["id"]})
+    job_id = create_job("retag")
+    background_tasks.add_task(run_decade_genres_job, job_id)
     return {"job_id": job_id}
 
 

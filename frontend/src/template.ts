@@ -90,6 +90,12 @@ export const APP_HTML = `
           <input id="setting-genre-separators" type="text" placeholder=";" />
           <span class="settings-hint">Each character is a separator — e.g. <code>;/,</code> splits <code>Rock / Pop</code> into two genres. <code>;</code> always applies. Adding one re-splits the library on save; removing one takes effect on the next scan.</span>
         </label>
+        <label class="settings-toggle">
+          <input id="setting-decade-genre" type="checkbox" />
+          <span>Add decade genre</span>
+        </label>
+        <p class="settings-hint">When enabled, saving tags also adds the decade of the year as a genre (<code>2005</code> → <code>2000</code>) and drops any other decade genre. Existing tracks are only changed by the button below.</p>
+        <button id="apply-decade-genres" class="btn btn-ghost btn-sm" type="button">Add decade genres to library</button>
       </div>
       <div class="settings-section">
         <div class="settings-section-title">File Renaming</div>

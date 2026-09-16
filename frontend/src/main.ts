@@ -2852,6 +2852,7 @@ const discogsTokenInput = document.getElementById('setting-discogs-token') as HT
 const scanExcludeInput  = document.getElementById('setting-scan-exclude') as HTMLTextAreaElement
 const genreSeparatorsInput = document.getElementById('setting-genre-separators') as HTMLInputElement
 const autoScanInput     = document.getElementById('setting-auto-scan') as HTMLInputElement
+const decadeGenreInput  = document.getElementById('setting-decade-genre') as HTMLInputElement
 const renameOnSaveInput = document.getElementById('setting-rename-on-save') as HTMLInputElement
 const renameTemplateInput = document.getElementById('setting-rename-template') as HTMLInputElement
 const renamePreviewEl   = document.getElementById('rename-preview')!
@@ -2888,6 +2889,7 @@ async function openSettings() {
     scanExcludeInput.value    = (s.scan_exclude ?? []).join('\n')
     genreSeparatorsInput.value = (s.genre_separators ?? [';']).join('')
     autoScanInput.value       = String(s.auto_scan_minutes ?? 0)
+    decadeGenreInput.checked  = s.decade_genre ?? false
     renameOnSaveInput.checked = s.rename_on_save
     renameTemplateInput.value = s.rename_template
     renameTemplateWrap.style.display = s.rename_on_save ? '' : 'none'
@@ -3022,6 +3024,17 @@ musicDirsListEl.addEventListener('click', (e) => {
   renderMusicDirsList()
 })
 
+document.getElementById('apply-decade-genres')!.addEventListener('click', async () => {
+  try {
+    const { job_id } = await api.tags.applyDecadeGenres()
+    scanBtn.disabled = true
+    pollScan(job_id)
+    closeSettings()
+  } catch (e) {
+    toast(`Failed to add decade genres: ${e}`, 'error')
+  }
+})
+
 document.getElementById('settings-save')!.addEventListener('click', async () => {
   const scanTags: string[] = []
   getScanTagCheckboxes().forEach(cb => { if (cb.checked) scanTags.push(cb.dataset.tag!) })
@@ -3035,6 +3048,7 @@ document.getElementById('settings-save')!.addEventListener('click', async () => 
     scan_exclude:      scanExcludeInput.value.split('\n').map(x => x.trim()).filter(Boolean),
     auto_scan_minutes: Math.max(0, parseInt(autoScanInput.value, 10) || 0),
     genre_separators:  [...new Set(genreSeparatorsInput.value.replace(/\s+/g, ''))],
+    decade_genre:      decadeGenreInput.checked,
   }
   try {
     const saved = await api.settings.update(update)

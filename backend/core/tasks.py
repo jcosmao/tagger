@@ -204,6 +204,22 @@ async def run_retag_artist_job(job_id: str, artist: str, genres: list[str], mode
     await run_write_job(job_id, plan, f"{verb} genres of {artist}")
 
 
+async def run_decade_genres_job(job_id: str) -> None:
+    """Give every track with a year its decade genre ("2005" → "2000")."""
+    from core.genres import with_decade_genre
+
+    def plan(conn):
+        rows = conn.execute("SELECT * FROM tracks WHERE year != ''").fetchall()
+        plans = []
+        for row in rows:
+            new = with_decade_genre(row["genre"], row["year"])
+            if new != row["genre"]:
+                plans.append((row, {"genre": new}))
+        return plans
+
+    await run_write_job(job_id, plan, "Added decade genres")
+
+
 async def run_fetch_genres_job(job_id: str, refresh: bool = False, by: str = "album_artist") -> None:
     """Fetch genres for every artist not cached yet or that failed (or all, with refresh)."""
     from core.artist_genres import GROUPINGS, fetch_artist
