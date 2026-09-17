@@ -18,6 +18,22 @@ export function saveColPrefs(cols: Set<string>): void {
   localStorage.setItem(COLS_KEY, JSON.stringify([...cols]))
 }
 
+// Sidebar lists: alphabetical, or busiest first.
+export type NavSort = 'name' | 'count'
+const SORT_KEY = 'tagger_nav_sort'
+
+export function loadNavSort(): Record<'genres' | 'labels', NavSort> {
+  try {
+    return { genres: 'name', labels: 'name', ...JSON.parse(localStorage.getItem(SORT_KEY) || '{}') }
+  } catch {
+    return { genres: 'name', labels: 'name' }
+  }
+}
+
+export function saveNavSort(sort: Record<'genres' | 'labels', NavSort>): void {
+  try { localStorage.setItem(SORT_KEY, JSON.stringify(sort)) } catch { /* ignore */ }
+}
+
 export type TagField = 'title' | 'artist' | 'album' | 'album_artist' | 'year' | 'track_number' | 'disc_number' | 'genre' | 'comment' | 'composer' | 'bpm' | 'label' | 'lyrics'
 
 // Text/textarea fields driven by the generic form loop. `compilation` is a
@@ -54,6 +70,7 @@ export interface State {
   // genres panel
   genres:            Genre[]
   selectedGenre:     string | null
+  navSort:           Record<'genres' | 'labels', NavSort>
   // labels panel
   labels:            Label[]
   selectedLabel:     string | null
@@ -109,6 +126,7 @@ export const state: State = {
   artistDetail:      null,
   genres:            [],
   selectedGenre:     null,
+  navSort:           loadNavSort(),
   labels:            [],
   selectedLabel:     null,
   labelFilter:       '',

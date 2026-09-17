@@ -2,7 +2,7 @@ import './style.css'
 import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, AlbumYear, AlbumField, ApiError, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
-import { state, PAGE_SIZE, TAG_FIELDS, ALWAYS_COLS, DirNode, SidebarMode, saveColPrefs } from './state'
+import { state, PAGE_SIZE, TAG_FIELDS, ALWAYS_COLS, DirNode, SidebarMode, saveColPrefs, saveNavSort } from './state'
 import { COL_DEFS } from './columns'
 import {
   trackQuality, QUALITY_TITLES, QUALITY_ISSUES,
@@ -25,8 +25,10 @@ const artistGenresEl = document.getElementById('artist-genres')!
 const fetchAllBtn    = document.getElementById('fetch-all-btn') as HTMLButtonElement
 const fetchAllStatus = document.getElementById('fetch-all-status')!
 const genreFilterEl  = document.getElementById('genre-filter') as HTMLInputElement
+const genreSortBtn   = document.getElementById('genre-sort') as HTMLButtonElement
 const labelListEl    = document.getElementById('label-list')!
 const labelFilterEl  = document.getElementById('label-filter') as HTMLInputElement
+const labelSortBtn   = document.getElementById('label-sort') as HTMLButtonElement
 const genreOptionsEl = document.getElementById('genre-options')!
 const genreModeEl    = document.getElementById('genre-mode') as HTMLSelectElement
 const selectMatchingBtn = document.getElementById('select-matching-btn') as HTMLButtonElement
@@ -495,7 +497,29 @@ function pollFetchAll(jobId: string) {
 
 // ─── Genres panel ─────────────────────────────────────────────────────────────
 
+// Sidebar lists sort by name or by track count; the button shows the current one.
+function navSorted<T extends { track_count: number }>(items: T[], panel: 'genres' | 'labels', name: (i: T) => string): T[] {
+  const sorted = [...items]
+  if (state.navSort[panel] === 'count') {
+    sorted.sort((a, b) => b.track_count - a.track_count || name(a).localeCompare(name(b)))
+  }
+  return sorted
+}
+
+function renderSortBtn(btn: HTMLButtonElement, panel: 'genres' | 'labels') {
+  const byCount = state.navSort[panel] === 'count'
+  btn.textContent = byCount ? '# ↓' : 'A–Z'
+  btn.title = byCount ? 'Sorted by track count — click for alphabetical' : 'Sorted alphabetically — click for track count'
+}
+
+function toggleNavSort(panel: 'genres' | 'labels') {
+  state.navSort[panel] = state.navSort[panel] === 'count' ? 'name' : 'count'
+  saveNavSort(state.navSort)
+  if (panel === 'genres') renderGenresPanel(); else renderLabelsPanel()
+}
+
 function renderGenresPanel() {
+  renderSortBtn(genreSortBtn, 'genres')
   genreListEl.innerHTML = ''
 
   const allLi = document.createElement('li')
@@ -505,7 +529,7 @@ function renderGenresPanel() {
   genreListEl.appendChild(allLi)
 
   const needle = state.genreFilter.trim().toLowerCase()
-  for (const g of state.genres) {
+  for (const g of navSorted(state.genres, 'genres', g => g.genre)) {
     if (needle && !g.genre.toLowerCase().includes(needle)) continue
     const li = document.createElement('li')
     li.className = 'nav-item nav-genre' + (state.selectedGenre === g.genre ? ' active' : '')
@@ -528,6 +552,7 @@ function renderGenresPanel() {
 // ─── Labels panel ─────────────────────────────────────────────────────────────
 
 function renderLabelsPanel() {
+  renderSortBtn(labelSortBtn, 'labels')
   labelListEl.innerHTML = ''
 
   const allLi = document.createElement('li')
@@ -537,7 +562,7 @@ function renderLabelsPanel() {
   labelListEl.appendChild(allLi)
 
   const needle = state.labelFilter.trim().toLowerCase()
-  for (const l of state.labels) {
+  for (const l of navSorted(state.labels, 'labels', l => l.label)) {
     if (needle && !l.label.toLowerCase().includes(needle)) continue
     const li = document.createElement('li')
     li.className = 'nav-item nav-genre' + (state.selectedLabel === l.label ? ' active' : '')
@@ -2830,6 +2855,9 @@ genreListEl.addEventListener('click', async (e) => {
   await loadTracks()
   renderEditor()
 })
+
+genreSortBtn.addEventListener('click', () => toggleNavSort('genres'))
+labelSortBtn.addEventListener('click', () => toggleNavSort('labels'))
 
 genreFilterEl.addEventListener('input', () => {
   state.genreFilter = genreFilterEl.value

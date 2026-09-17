@@ -146,6 +146,7 @@ export const APP_HTML = `
       <nav id="panel-genres" class="sidebar-panel" hidden>
         <div class="nav-toolbar">
           <input id="genre-filter" class="nav-filter" type="search" placeholder="Filter genres…" autocomplete="off" />
+          <button id="genre-sort" class="btn btn-ghost btn-sm nav-toolbar-fixed" type="button">A–Z</button>
         </div>
         <ul id="genre-list" class="nav-list"></ul>
         <datalist id="genre-options"></datalist>
@@ -153,6 +154,7 @@ export const APP_HTML = `
       <nav id="panel-labels" class="sidebar-panel" hidden>
         <div class="nav-toolbar">
           <input id="label-filter" class="nav-filter" type="search" placeholder="Filter labels…" autocomplete="off" />
+          <button id="label-sort" class="btn btn-ghost btn-sm nav-toolbar-fixed" type="button">A–Z</button>
         </div>
         <ul id="label-list" class="nav-list"></ul>
       </nav>
