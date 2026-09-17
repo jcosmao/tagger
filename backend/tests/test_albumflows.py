@@ -63,3 +63,23 @@ def test_find_replace_rejects_unknown_field(client):
     r = client.post("/api/tags/find-replace",
                     json={"track_ids": [1], "field": "path", "find": "x", "replace": "y"})
     assert r.status_code == 400
+
+
+def test_stale_jobs_are_failed_on_startup(temp_db):
+    """A restart kills in-process jobs; their rows must not stay 'running'."""
+    from core.tasks import active_job, create_job, fail_stale_jobs, get_job
+
+    job_id = create_job("years")
+    running = create_job("scan")
+    with db() as conn:
+        conn.execute("UPDATE scan_jobs SET status = 'running' WHERE id = ?", (running,))
+        conn.execute(
+            "INSERT INTO scan_jobs (id, kind, status, finished_at) VALUES ('old', 'scan', 'done', 1.0)"
+        )
+
+    assert fail_stale_jobs() == 2
+    assert get_job(job_id)["error"] == "interrupted by a restart"
+    assert get_job(running)["status"] == "error"
+    assert get_job("old")["status"] == "done"      # finished jobs are left alone
+    assert active_job() is None                    # new jobs are no longer blocked
+    assert fail_stale_jobs() == 0

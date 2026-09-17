@@ -53,6 +53,25 @@ def active_job(kind: str | None = None) -> dict | None:
     return dict(row) if row else None
 
 
+def fail_stale_jobs() -> int:
+    """
+    Mark jobs left pending/running by a previous process as failed.
+
+    Jobs only exist as in-process background tasks, so a restart kills them
+    while their row still says "running" — which would block every new job
+    (409) and leave the UI polling a job that can never finish.
+    """
+    with db() as conn:
+        cur = conn.execute(
+            "UPDATE scan_jobs SET status = 'error', finished_at = ?, "
+            "error = 'interrupted by a restart' WHERE status IN ('pending', 'running')",
+            (time.time(),),
+        )
+    if cur.rowcount:
+        logger.warning("marked %d stale job(s) as failed after restart", cur.rowcount)
+    return cur.rowcount
+
+
 def list_jobs(limit: int = 20) -> list[dict]:
     with db() as conn:
         rows = conn.execute(
