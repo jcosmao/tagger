@@ -106,6 +106,7 @@ class TagUpdate(BaseModel):
     bpm: Optional[str] = None
     lyrics: Optional[str] = None
     compilation: Optional[str] = None
+    label: Optional[str] = None
     mb_track_id: Optional[str] = None
     mb_artist_id: Optional[str] = None
     mb_album_id: Optional[str] = None

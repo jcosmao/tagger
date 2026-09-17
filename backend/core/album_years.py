@@ -1,12 +1,14 @@
 """
-Original release years for albums, one lookup per album.
+Original release year and record label of an album, in one lookup.
 
-An album is a directory of tracks sharing an album tag. Its year comes from
-the MusicBrainz release group's first release date: read straight from the
-tagged release (mb_album_id) when there is one, else from a release-group
-search. Discogs masters (with a token) then the iTunes Store are asked when
-MusicBrainz has nothing. Results are cached in `album_years` keyed by album,
-so a rerun only asks about new albums; writing the year is a separate step.
+An album is a directory of tracks sharing an album tag. The year comes from
+the MusicBrainz release group's first release date and the label from the
+release's label info: one request when the album is tagged with a release id
+(mb_album_id), otherwise a release-group search plus a browse of that group's
+releases for the label. Discogs masters (with a token) carry both; iTunes is
+a last resort and only knows the year. Results are cached in `album_years`
+keyed by album, so a rerun only asks about new albums; writing the tags is a
+separate step.
 """
 from __future__ import annotations
 
@@ -62,12 +64,31 @@ def _pace_fallback() -> None:
         _last_fallback = time.monotonic()
 
 
-def musicbrainz_year(artist: str, album: str, release_id: str | None) -> tuple[str | None, str | None]:
-    """(year, release-group id) of the album's first release on MusicBrainz."""
+def _label_of(release: dict) -> str | None:
+    """First named label of a release."""
+    for info in release.get("label-info") or []:
+        name = (info.get("label") or {}).get("name")
+        if name:
+            return name
+    return None
+
+
+def _group_label(release_group_id: str) -> str | None:
+    """Label of the earliest release in a release group — the original issue."""
+    releases = _mb_get("release", {"release-group": release_group_id, "inc": "labels", "limit": 50}).get("releases", [])
+    labelled = [r for r in releases if _label_of(r)]
+    if not labelled:
+        return None
+    return _label_of(min(labelled, key=lambda r: r.get("date") or "9999"))
+
+
+def musicbrainz_album(artist: str, album: str, release_id: str | None) -> tuple[str | None, str | None, str | None]:
+    """(year, label, release-group id) of the album's first release on MusicBrainz."""
     if release_id and _UUID.match(release_id):
-        rg = _mb_get(f"release/{release_id}", {"inc": "release-groups"}).get("release-group") or {}
+        rel = _mb_get(f"release/{release_id}", {"inc": "release-groups labels"})
+        rg = rel.get("release-group") or {}
         if _year(rg.get("first-release-date")):
-            return _year(rg["first-release-date"]), rg.get("id")
+            return _year(rg["first-release-date"]), _label_of(rel), rg.get("id")
     query = f'releasegroup:"{_lucene(_clean(album))}"'
     if artist:
         query += f' AND artist:"{_lucene(artist)}"'
@@ -75,26 +96,29 @@ def musicbrainz_year(artist: str, album: str, release_id: str | None) -> tuple[s
     same = [h for h in hits if h.get("score", 0) >= 80 and _norm(h.get("title", "")) == _norm(album)
             and _year(h.get("first-release-date"))]
     if not same:
-        return None, None
+        return None, None, None
     # Several groups by the same name (album, single, live): the earliest is the original.
     best = min(same, key=lambda h: (_year(h["first-release-date"]), -h.get("score", 0)))
-    return _year(best["first-release-date"]), best.get("id")
+    group_id = best.get("id")
+    return _year(best["first-release-date"]), (_group_label(group_id) if group_id else None), group_id
 
 
-def discogs_year(artist: str, album: str, token: str) -> str | None:
-    """Year of the album's Discogs master release."""
+def discogs_album(artist: str, album: str, token: str) -> tuple[str | None, str | None]:
+    """(year, label) of the album's Discogs master release."""
     _pace_fallback()
     params = {"type": "master", "release_title": _clean(album), "per_page": 10, "token": token}
     if artist:
         params["artist"] = artist
-    years = []
+    matches = []
     for item in _get_json(_DISCOGS_SEARCH + "?" + urllib.parse.urlencode(params)).get("results", []):
         # Titles read "Artist - Album"; homonyms are suffixed "Air (2)", variations "*".
         head, _, title = item.get("title", "").partition(" - ")
         head = re.sub(r"\s*\(\d+\)$", "", head.rstrip("*"))
         if _norm(title) == _norm(album) and (not artist or _same_name(head, artist)) and item.get("year"):
-            years.append(str(item["year"]))
-    return min(years) if years else None
+            matches.append((str(item["year"]), next(iter(item.get("label") or []), None)))
+    if not matches:
+        return None, None
+    return min(matches, key=lambda m: m[0])
 
 
 def itunes_year(artist: str, album: str) -> str | None:
@@ -111,28 +135,28 @@ def itunes_year(artist: str, album: str) -> str | None:
     return min(years) if years else None
 
 
-def fetch_year(artist: str, album: str, release_id: str | None) -> dict:
-    """Ask MusicBrainz, then the fallbacks; returns {year, source, mbid, error}."""
-    entry = {"year": None, "source": None, "mbid": None, "error": None}
+def fetch_album(artist: str, album: str, release_id: str | None) -> dict:
+    """Ask MusicBrainz, then the fallbacks; returns {year, label, source, mbid, error}."""
+    entry = {"year": None, "label": None, "source": None, "mbid": None, "error": None}
     errors = []
     try:
-        entry["year"], entry["mbid"] = musicbrainz_year(artist, album, release_id)
+        entry["year"], entry["label"], entry["mbid"] = musicbrainz_album(artist, album, release_id)
         entry["source"] = "musicbrainz" if entry["year"] else None
     except MusicBrainzError as exc:
         errors.append(f"MusicBrainz: {exc}")
 
     if not entry["year"]:
         token = _discogs_token()
-        fallbacks = ([("discogs", lambda: discogs_year(artist, album, token))] if token else []) + \
-                    [("itunes", lambda: itunes_year(artist, album))]
+        fallbacks = ([("discogs", lambda: discogs_album(artist, album, token))] if token else []) + \
+                    [("itunes", lambda: (itunes_year(artist, album), None))]
         for source, get in fallbacks:
             try:
-                year = get()
+                year, label = get()
             except ProviderError as exc:
                 errors.append(f"{SOURCE_LABELS[source]}: {exc}")
                 continue
             if year:
-                entry.update(year=year, source=source)
+                entry.update(year=year, label=label, source=source)
                 break
     if not entry["year"] and errors:
         entry["error"] = "; ".join(errors)
@@ -157,7 +181,7 @@ def library_albums(conn, directories: list[str] | None = None) -> list[dict]:
         where += f" AND directory IN ({','.join('?' * len(directories))})"
         params = directories
     rows = conn.execute(
-        f"SELECT directory, artist, album_artist, album, year, mb_album_id FROM tracks {where} ORDER BY directory",
+        f"SELECT directory, artist, album_artist, album, year, label, mb_album_id FROM tracks {where} ORDER BY directory",
         params,
     ).fetchall()
     groups: dict[str, list] = {}
@@ -175,6 +199,7 @@ def library_albums(conn, directories: list[str] | None = None) -> list[dict]:
             "mb_album_id": release_id or None,
             "track_count": len(tracks),
             "years": dict(Counter(r["year"] or "" for r in tracks).most_common()),
+            "labels": dict(Counter(r["label"] or "" for r in tracks).most_common()),
             "key": album_key(artist, album, release_id),
         })
     return out
@@ -186,37 +211,58 @@ def cached(conn) -> dict[str, dict]:
 
 def store(conn, key: str, entry: dict) -> None:
     conn.execute(
-        "INSERT OR REPLACE INTO album_years (key, year, source, mbid, error, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (key, entry["year"], entry["source"], entry["mbid"], entry["error"], time.time()),
+        "INSERT OR REPLACE INTO album_years (key, year, label, source, mbid, error, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (key, entry["year"], entry["label"], entry["source"], entry["mbid"], entry["error"], time.time()),
     )
 
 
+FIELDS = ("year", "label")
+
+
+def _track_updates(track, hit: dict, fields: tuple[str, ...]) -> dict:
+    """Fields of one track that the fetched album differs on."""
+    updates = {}
+    if "year" in fields and hit.get("year") and _year(track["year"]) != hit["year"]:
+        updates["year"] = hit["year"]
+    if "label" in fields and hit.get("label") and (track["label"] or "") != hit["label"]:
+        updates["label"] = hit["label"]
+    return updates
+
+
 def proposals(conn) -> list[dict]:
-    """Every tagged album with its fetched year, if any, and how many tracks it would change."""
+    """Every tagged album with its fetched year and label, and how many tracks each would change."""
     cache = cached(conn)
     out = []
     for a in library_albums(conn):
-        hit = cache.get(a.pop("key"))
-        found = hit["year"] if hit else None
+        hit = cache.get(a.pop("key")) or {}
+        year, label = hit.get("year"), hit.get("label")
         a.update(
-            fetched=hit is not None,
-            found_year=found,
-            source=hit["source"] if hit else None,
-            error=hit["error"] if hit else None,
-            changed=sum(n for y, n in a["years"].items() if _year(y) != found) if found else 0,
+            fetched=bool(hit),
+            found_year=year,
+            found_label=label,
+            source=hit.get("source"),
+            error=hit.get("error"),
+            changed_year=sum(n for y, n in a["years"].items() if _year(y) != year) if year else 0,
+            changed_label=sum(n for v, n in a["labels"].items() if v != label) if label else 0,
         )
+        a["changed"] = max(a["changed_year"], a["changed_label"])
         out.append(a)
     return out
 
 
-def year_updates(conn, directories: list[str]) -> list[tuple]:
-    """[(track row, {"year": found})] for tracks whose year differs from their album's fetched year."""
+def album_updates(conn, directories: list[str], fields: tuple[str, ...] = FIELDS) -> list[tuple]:
+    """
+    [(track row, updates)] for tracks differing from their album's fetched data.
+    Year and label are applied independently: `fields` picks which are written.
+    """
+    fields = tuple(f for f in fields if f in FIELDS)
     cache = cached(conn)
     found = {}
     for a in library_albums(conn, directories):
         hit = cache.get(a["key"])
-        if hit and hit["year"]:
-            found[a["directory"]] = hit["year"]
+        if hit and any(hit[f] for f in fields):
+            found[a["directory"]] = hit
     if not found:
         return []
     rows = conn.execute(
@@ -224,4 +270,5 @@ def year_updates(conn, directories: list[str]) -> list[tuple]:
         f"AND directory IN ({','.join('?' * len(found))})",
         list(found),
     ).fetchall()
-    return [(r, {"year": found[r["directory"]]}) for r in rows if _year(r["year"]) != found[r["directory"]]]
+    plans = [(r, _track_updates(r, found[r["directory"]], fields)) for r in rows]
+    return [(r, u) for r, u in plans if u]

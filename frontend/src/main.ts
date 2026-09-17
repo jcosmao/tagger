@@ -1,5 +1,5 @@
 import './style.css'
-import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, AlbumYear, ApiError, setUnauthorizedHandler } from './api'
+import { api, Track, Artist, Album, GenreOps, LookupResult, AppSettings, AlbumInconsistency, UnifyField, ScanJob, ArtistGrouping, AlbumYear, AlbumField, ApiError, setUnauthorizedHandler } from './api'
 import { toast } from './toast'
 import { esc, fmtDuration, debounce } from './util'
 import { state, PAGE_SIZE, TAG_FIELDS, ALWAYS_COLS, DirNode, SidebarMode, saveColPrefs } from './state'
@@ -25,6 +25,8 @@ const artistGenresEl = document.getElementById('artist-genres')!
 const fetchAllBtn    = document.getElementById('fetch-all-btn') as HTMLButtonElement
 const fetchAllStatus = document.getElementById('fetch-all-status')!
 const genreFilterEl  = document.getElementById('genre-filter') as HTMLInputElement
+const labelListEl    = document.getElementById('label-list')!
+const labelFilterEl  = document.getElementById('label-filter') as HTMLInputElement
 const genreOptionsEl = document.getElementById('genre-options')!
 const genreModeEl    = document.getElementById('genre-mode') as HTMLSelectElement
 const selectMatchingBtn = document.getElementById('select-matching-btn') as HTMLButtonElement
@@ -143,6 +145,7 @@ function renderSidebarTabs() {
   })
   document.getElementById('panel-tags')!.hidden    = state.sidebarMode !== 'tags'
   document.getElementById('panel-genres')!.hidden  = state.sidebarMode !== 'genres'
+  document.getElementById('panel-labels')!.hidden  = state.sidebarMode !== 'labels'
   document.getElementById('panel-artists')!.hidden = state.sidebarMode !== 'artists'
   renderArtistGenres()
   document.getElementById('panel-files')!.hidden   = state.sidebarMode !== 'files'
@@ -522,6 +525,40 @@ function renderGenresPanel() {
   }
 }
 
+// ─── Labels panel ─────────────────────────────────────────────────────────────
+
+function renderLabelsPanel() {
+  labelListEl.innerHTML = ''
+
+  const allLi = document.createElement('li')
+  allLi.className = 'nav-item nav-all' + (state.selectedLabel === null ? ' active' : '')
+  allLi.dataset.all = '1'
+  allLi.innerHTML = `<span class="nav-icon">♪</span><span class="nav-label">All tracks</span>`
+  labelListEl.appendChild(allLi)
+
+  const needle = state.labelFilter.trim().toLowerCase()
+  for (const l of state.labels) {
+    if (needle && !l.label.toLowerCase().includes(needle)) continue
+    const li = document.createElement('li')
+    li.className = 'nav-item nav-genre' + (state.selectedLabel === l.label ? ' active' : '')
+    li.dataset.label = l.label
+    li.innerHTML = `
+      <span class="nav-label">${esc(l.label || '(No label)')}</span>
+      <span class="nav-count">${l.track_count}</span>
+    `
+    labelListEl.appendChild(li)
+  }
+}
+
+async function loadLabels() {
+  try {
+    state.labels = await api.library.labels()
+    renderLabelsPanel()
+  } catch (e) {
+    toast(`Failed to load labels: ${e}`, 'error')
+  }
+}
+
 function genreCount(name: string): number {
   return state.genres.find(g => g.genre === name)?.track_count ?? 0
 }
@@ -716,8 +753,8 @@ async function renderQualityPanel() {
   const years = document.createElement('li')
   years.className = 'nav-item quality-issue-item'
   years.dataset.issue = 'album_years'
-  years.title = 'Fetch original release years per album from MusicBrainz (Discogs/iTunes as fallback)'
-  years.innerHTML = '<span class="nav-icon">📅</span><span class="nav-label">Album years…</span>'
+  years.title = 'Fetch the original release year and record label per album from MusicBrainz (Discogs/iTunes as fallback)'
+  years.innerHTML = '<span class="nav-icon">📅</span><span class="nav-label">Album years &amp; labels…</span>'
   qualityListEl.appendChild(years)
 }
 
@@ -1347,7 +1384,7 @@ function applyLookupResult(r: LookupResult) {
 // ─── Auto-fix ─────────────────────────────────────────────────────────────────
 
 const FIX_SAVE_FIELDS: (keyof LookupResult)[] = [
-  'title', 'artist', 'album', 'album_artist', 'year', 'track_number', 'disc_number',
+  'title', 'artist', 'album', 'album_artist', 'year', 'label', 'track_number', 'disc_number',
   'mb_track_id', 'mb_artist_id', 'mb_album_id', 'mb_album_artist_id',
 ]
 
@@ -1357,6 +1394,7 @@ const FIX_DISPLAY_FIELDS: { key: keyof LookupResult; label: string }[] = [
   { key: 'album',        label: 'Album'        },
   { key: 'album_artist', label: 'Album Artist' },
   { key: 'year',         label: 'Year'         },
+  { key: 'label',        label: 'Label'        },
   { key: 'track_number', label: 'Track #'      },
   { key: 'disc_number',  label: 'Disc #'       },
 ]
@@ -1612,6 +1650,7 @@ async function loadGenres() {
 // reload: they also feed the editor's autocomplete.
 async function reloadNav() {
   if (state.sidebarMode === 'tags') await loadLibrary()
+  if (state.sidebarMode === 'labels') await loadLabels()
   await loadGenres()
 }
 
@@ -1673,6 +1712,10 @@ async function loadTracks() {
     } else if (state.sidebarMode === 'genres') {
       const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
       if (state.selectedGenre !== null) params.genre = state.selectedGenre
+      result = await api.library.tracks(params)
+    } else if (state.sidebarMode === 'labels') {
+      const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
+      if (state.selectedLabel !== null) params.label = state.selectedLabel
       result = await api.library.tracks(params)
     } else if (state.sidebarMode === 'artists') {
       const params: Record<string, string | number> = { limit: PAGE_SIZE, offset }
@@ -1771,6 +1814,7 @@ async function onJobFinished(job: ScanJob) {
   state.qualityIssues = null
   await loadLibrary()
   await loadGenres()
+  if (state.sidebarMode === 'labels') await loadLabels()
   if (job.kind === 'scan') await loadTree()
   if (state.sidebarMode === 'artists') await loadArtists()
   if (genreArtist()) { artistDetailFor = null; await loadArtistDetail() }
@@ -1805,6 +1849,7 @@ const UNIFY_GROUPS: { label: string; fields: UnifyField[] }[] = [
   { label: 'Genre', fields: ['genre'] },
   { label: 'Year (earliest)', fields: ['year'] },
   { label: 'Album / Album artist / Compilation', fields: ['album', 'album_artist', 'compilation'] },
+  { label: 'Label', fields: ['label'] },
 ]
 
 async function showUnifyAlbums() {
@@ -1940,8 +1985,8 @@ async function showAlbumYears() {
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
     <div class="modal-card unify-card">
-      <div class="modal-title">Album years</div>
-      <div class="modal-hint">Original release year of each album, one lookup per album: MusicBrainz release group (direct when the album is tagged with a release id), else Discogs master, else iTunes. Results are cached — fetching again only asks about new or failed albums.</div>
+      <div class="modal-title">Album years &amp; labels</div>
+      <div class="modal-hint">Original release year and record label of each album, fetched together: MusicBrainz (direct when the album is tagged with a release id), else Discogs master, else iTunes (year only). Results are cached — fetching again only asks about new or failed albums. Year and label are applied separately.</div>
       <div class="unify-toolbar">
         <button type="button" class="btn btn-ghost btn-sm" id="years-fetch">Fetch missing</button>
         <button type="button" class="btn btn-ghost btn-sm" id="years-refetch">Refetch all</button>
@@ -1950,6 +1995,8 @@ async function showAlbumYears() {
       <div class="modal-hint" id="years-summary">Loading…</div>
       <div class="unify-toolbar">
         <input id="years-filter" class="nav-filter" type="search" placeholder="Filter albums…" autocomplete="off" />
+        <label class="unify-field"><input type="checkbox" class="years-field" value="year" checked /> Year</label>
+        <label class="unify-field"><input type="checkbox" class="years-field" value="label" checked /> Label</label>
         <label class="unify-field"><input type="checkbox" id="years-changes" checked /> Only changes</label>
         <button type="button" class="btn btn-ghost btn-sm" id="years-all">All</button>
         <button type="button" class="btn btn-ghost btn-sm" id="years-none">None</button>
@@ -1985,49 +2032,65 @@ async function showAlbumYears() {
   let albums: AlbumYear[] = []
   const unchecked = new Set<string>()  // directories the user deselected, kept across reloads
 
-  const status = (a: AlbumYear) => {
-    const before = Object.entries(a.years)
+  const enabledFields = (): AlbumField[] =>
+    [...overlay.querySelectorAll<HTMLInputElement>('.years-field')].filter(cb => cb.checked)
+      .map(cb => cb.value as AlbumField)
+
+  // How many tracks the album would change, over the fields in play.
+  const changed = (a: AlbumYear, fields: AlbumField[]) => Math.max(
+    fields.includes('year') ? a.changed_year : 0,
+    fields.includes('label') ? a.changed_label : 0,
+  )
+
+  const row = (a: AlbumYear, field: AlbumField) => {
+    const current = field === 'year' ? a.years : a.labels
+    const found = field === 'year' ? a.found_year : a.found_label
+    const before = Object.entries(current)
       .map(([v, n]) => `<span class="unify-before">${esc(v || '(empty)')} <b>×${n}</b></span>`).join('')
-    if (!a.fetched) return `${before} <span class="unify-arrow">· not fetched</span>`
-    if (!a.found_year) return `${before} <span class="unify-arrow" title="${esc(a.error ?? '')}">· ${a.error ? 'lookup failed' : 'not found'}</span>`
     const src = a.source ? ` <span class="unify-arrow">${YEAR_SOURCES[a.source]}</span>` : ''
-    return a.changed
-      ? `${before} <span class="unify-arrow">→</span> <span class="unify-after">${esc(a.found_year)}</span>${src}`
-      : `${before} <span class="unify-arrow">✓</span>${src}`
+    let state: string
+    if (!a.fetched) state = '<span class="unify-arrow">· not fetched</span>'
+    else if (!found) state = `<span class="unify-arrow" title="${esc(a.error ?? '')}">· ${a.error ? 'lookup failed' : 'not found'}</span>`
+    else if (field === 'year' ? a.changed_year : a.changed_label)
+      state = `<span class="unify-arrow">→</span> <span class="unify-after">${esc(found)}</span>${src}`
+    else state = `<span class="unify-arrow">✓</span>${src}`
+    return `<div class="unify-change"><span class="unify-name">${field}</span> ${before} ${state}</div>`
   }
 
   const render = () => {
     const needle = filterEl.value.trim().toLowerCase()
     const onlyChanges = changesEl.checked
+    const fields = enabledFields()
     listEl.innerHTML = ''
     const frag = document.createDocumentFragment()
     let shown = 0, checked = 0, tracks = 0
     for (const a of albums) {
-      if (onlyChanges && !a.changed) continue
+      const n = changed(a, fields)
+      if (onlyChanges && !n) continue
       if (needle && !`${a.artist} ${a.album} ${a.directory}`.toLowerCase().includes(needle)) continue
       shown++
-      const on = a.changed > 0 && !unchecked.has(a.directory)
-      if (on) { checked++; tracks += a.changed }
+      const on = n > 0 && !unchecked.has(a.directory)
+      if (on) { checked++; tracks += n }
       const li = document.createElement('li')
       li.className = 'unify-album'
       li.dataset.dir = a.directory
       li.innerHTML = `
         <label class="unify-album-head">
-          <input type="checkbox" ${on ? 'checked' : ''} ${a.changed ? '' : 'disabled'} />
+          <input type="checkbox" ${on ? 'checked' : ''} ${n ? '' : 'disabled'} />
           <span class="unify-album-name" title="${esc(a.directory)}">${esc(a.artist || '?')} — ${esc(a.album)}</span>
           <span class="nav-count">${a.track_count} track${a.track_count !== 1 ? 's' : ''}</span>
         </label>
-        <div class="unify-change"><span class="unify-name">year</span> ${status(a)}</div>
+        ${fields.map(f => row(a, f)).join('')}
       `
       frag.appendChild(li)
     }
     listEl.appendChild(frag)
     const pending = albums.filter(a => !a.fetched).length
-    const found = albums.filter(a => a.changed).length
-    summaryEl.textContent = `${albums.length.toLocaleString()} albums · ${pending.toLocaleString()} not fetched · ${found.toLocaleString()} with a different year · ${shown.toLocaleString()} shown`
-    applyBtn.disabled = checked === 0
+    const found = albums.filter(a => changed(a, fields)).length
+    summaryEl.textContent = `${albums.length.toLocaleString()} albums · ${pending.toLocaleString()} not fetched · ${found.toLocaleString()} to change · ${shown.toLocaleString()} shown`
+    applyBtn.disabled = checked === 0 || !fields.length
     applyBtn.textContent = checked
-      ? `Apply to ${checked.toLocaleString()} album${checked !== 1 ? 's' : ''} (${tracks.toLocaleString()} tracks)`
+      ? `Apply ${fields.join(' + ')} to ${checked.toLocaleString()} album${checked !== 1 ? 's' : ''} (${tracks.toLocaleString()} tracks)`
       : 'Apply'
   }
 
@@ -2077,6 +2140,7 @@ async function showAlbumYears() {
 
   filterEl.addEventListener('input', render)
   changesEl.addEventListener('change', render)
+  overlay.querySelectorAll('.years-field').forEach(cb => cb.addEventListener('change', render))
   listEl.addEventListener('change', e => {
     const input = e.target as HTMLInputElement
     const dir = input.closest<HTMLElement>('.unify-album')!.dataset.dir!
@@ -2093,10 +2157,11 @@ async function showAlbumYears() {
   $('#years-none').addEventListener('click', () => setVisible(false))
 
   applyBtn.addEventListener('click', async () => {
-    const directories = albums.filter(a => a.changed && !unchecked.has(a.directory)).map(a => a.directory)
+    const fields = enabledFields()
+    const directories = albums.filter(a => changed(a, fields) && !unchecked.has(a.directory)).map(a => a.directory)
     applyBtn.disabled = true
     try {
-      const { job_id } = await api.albums.applyYears(directories)
+      const { job_id } = await api.albums.applyYears(directories, fields)
       close()
       scanBtn.disabled = true
       pollScan(job_id)
@@ -2333,7 +2398,7 @@ const FIND_REPLACE_FIELDS: { key: string; label: string }[] = [
   { key: 'title', label: 'Title' }, { key: 'artist', label: 'Artist' },
   { key: 'album', label: 'Album' }, { key: 'album_artist', label: 'Album Artist' },
   { key: 'genre', label: 'Genre' }, { key: 'composer', label: 'Composer' },
-  { key: 'comment', label: 'Comment' },
+  { key: 'comment', label: 'Comment' }, { key: 'label', label: 'Label' },
 ]
 
 function showFindReplace() {
@@ -2407,6 +2472,9 @@ function currentViewParams(): Record<string, string | number> {
   }
   if (state.sidebarMode === 'genres') {
     return state.selectedGenre !== null ? { genre: state.selectedGenre } : {}
+  }
+  if (state.sidebarMode === 'labels') {
+    return state.selectedLabel !== null ? { label: state.selectedLabel } : {}
   }
   if (state.sidebarMode === 'artists') {
     return state.selectedArtistKey !== null ? { artist_key: state.selectedArtistKey } : {}
@@ -2593,6 +2661,8 @@ document.querySelector('.sidebar-tabs')!.addEventListener('click', async (e) => 
     loadArtistDetail()
   } else if (mode === 'genres') {
     await loadGenres()
+  } else if (mode === 'labels') {
+    await loadLabels()
   } else if (mode === 'artists') {
     renderSidebarTabs()
     await loadArtists()
@@ -2764,6 +2834,24 @@ genreListEl.addEventListener('click', async (e) => {
 genreFilterEl.addEventListener('input', () => {
   state.genreFilter = genreFilterEl.value
   renderGenresPanel()
+})
+
+// Labels panel: label clicks and filter
+labelListEl.addEventListener('click', async (e) => {
+  const li = (e.target as HTMLElement).closest<HTMLElement>('.nav-item')
+  if (!li) return
+  clearSearch()
+  state.selectedLabel = li.dataset.all === '1' ? null : (li.dataset.label ?? null)
+  state.selectedIds.clear()
+  state.page = 0
+  renderLabelsPanel()
+  await loadTracks()
+  renderEditor()
+})
+
+labelFilterEl.addEventListener('input', () => {
+  state.labelFilter = labelFilterEl.value
+  renderLabelsPanel()
 })
 
 // Files panel: directory tree clicks

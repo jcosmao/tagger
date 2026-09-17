@@ -13,6 +13,7 @@ def _release(rid, titles, discs=1):
     return {
         "id": rid, "title": "Nevermind", "date": "2011-09-26", "country": "XE",
         "artist-credit": [{"name": "Nirvana", "artist": {"id": "nirvana-id"}}],
+        "label-info": [{"label": {"name": "DGC"}}],
         "release-group": {"first-release-date": "1991-09-24"},
         "media": [
             {"position": d + 1, "tracks": [
@@ -71,6 +72,7 @@ def test_one_search_and_one_release_fetch_for_the_album(mb):
     assert by_id[2]["title"] == "In Bloom" and by_id[2]["mb_track_id"] == "rec-0-1"
     assert by_id[3]["title"] == "Come as You Are"
     assert by_id[1]["album_artist"] == "Nirvana" and by_id[1]["mb_album_id"] == REL_A
+    assert by_id[1]["label"] == "DGC"
     assert out["unmatched"] == [4]
 
 
@@ -86,7 +88,7 @@ def test_positions_break_title_ties_across_discs():
          "mb_artist_id": None, "mb_track_id": "d1"},
         {"title": "Intro", "track_number": "1", "disc_number": "2", "length": 60, "artist": "A",
          "mb_artist_id": None, "mb_track_id": "d2"},
-    ], "title": "X", "artist": "A", "artist_id": None, "year": "2000", "id": REL_A}
+    ], "title": "X", "artist": "A", "artist_id": None, "year": "2000", "label": "L", "id": REL_A}
     matches, unmatched = am.match_tracks(
         [_local(1, title="Intro", track_number="1", disc_number="2"),
          _local(2, title="Intro", track_number="1", disc_number="1")], rel)

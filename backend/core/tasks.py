@@ -221,7 +221,7 @@ async def run_decade_genres_job(job_id: str) -> None:
 
 
 async def run_album_years_job(job_id: str, directories: list[str] | None, refresh: bool = False) -> None:
-    """Fetch the original year of every album not cached yet or that failed (or all, with refresh)."""
+    """Fetch year and label of every album not cached yet or that failed (or all, with refresh)."""
     from core import album_years
     from core.database import get_conn
 
@@ -236,7 +236,7 @@ async def run_album_years_job(job_id: str, directories: list[str] | None, refres
                     todo.setdefault(a["key"], a)  # the same album in two folders is asked once
             _update_job(job_id, total=len(todo), scanned=0)
             for i, (key, a) in enumerate(todo.items(), start=1):
-                album_years.store(conn, key, album_years.fetch_year(a["artist"], a["album"], a["mb_album_id"]))
+                album_years.store(conn, key, album_years.fetch_album(a["artist"], a["album"], a["mb_album_id"]))
                 conn.commit()
                 _update_job(job_id, scanned=i)
             return len(todo)
@@ -252,11 +252,12 @@ async def run_album_years_job(job_id: str, directories: list[str] | None, refres
         logger.exception("album years %s failed: %s", job_id, exc)
 
 
-async def run_apply_album_years_job(job_id: str, directories: list[str]) -> None:
-    """Write each album's fetched year to its tracks."""
-    from core.album_years import year_updates
+async def run_apply_album_years_job(job_id: str, directories: list[str], fields: tuple[str, ...]) -> None:
+    """Write each album's fetched year and/or label to its tracks."""
+    from core.album_years import album_updates
 
-    await run_write_job(job_id, lambda conn: year_updates(conn, directories), "Set album years")
+    summary = "Set album " + " and ".join(fields)
+    await run_write_job(job_id, lambda conn: album_updates(conn, directories, fields), summary)
 
 
 async def run_fetch_genres_job(job_id: str, refresh: bool = False, by: str = "album_artist") -> None:

@@ -13,7 +13,7 @@ from collections import Counter
 
 from core.genres import join_genres, split_genres
 
-UNIFY_FIELDS = ["genre", "year", "album", "album_artist", "compilation"]
+UNIFY_FIELDS = ["genre", "year", "album", "album_artist", "compilation", "label"]
 
 _YEAR = re.compile(r"\s*(\d{4})")
 

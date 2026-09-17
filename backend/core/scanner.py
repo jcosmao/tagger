@@ -113,13 +113,13 @@ def scan_library(
                             bitrate, sample_rate, channels,
                             title, artist, album, album_artist, year, genre,
                             track_number, disc_number, comment, composer, bpm,
-                            lyrics, compilation, scanned_at
+                            lyrics, compilation, label, scanned_at
                         ) VALUES (
                             :path, :filename, :directory, :format, :size, :mtime, :duration,
                             :bitrate, :sample_rate, :channels,
                             :title, :artist, :album, :album_artist, :year, :genre,
                             :track_number, :disc_number, :comment, :composer, :bpm,
-                            :lyrics, :compilation, :scanned_at
+                            :lyrics, :compilation, :label, :scanned_at
                         )
                         ON CONFLICT(path) DO UPDATE SET
                             filename     = excluded.filename,
@@ -144,6 +144,7 @@ def scan_library(
                             bpm          = excluded.bpm,
                             lyrics       = excluded.lyrics,
                             compilation  = excluded.compilation,
+                            label        = excluded.label,
                             scanned_at   = excluded.scanned_at
                         """,
                         {
@@ -170,6 +171,7 @@ def scan_library(
                             "bpm": tags.get("bpm"),
                             "lyrics": tags.get("lyrics"),
                             "compilation": tags.get("compilation"),
+                            "label": tags.get("label"),
                             "scanned_at": now,
                         },
                     )

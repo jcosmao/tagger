@@ -1,4 +1,4 @@
-import { Track, Artist, Album, Genre, ArtistEntry, ArtistDetail, ScanJob, LookupResult, IssueCount } from './api'
+import { Track, Artist, Album, Genre, Label, ArtistEntry, ArtistDetail, ScanJob, LookupResult, IssueCount } from './api'
 
 export const PAGE_SIZE = 100
 export const DEFAULT_COLS = ['quality', 'title', 'artist', 'album', 'album_artist', 'year', 'track_number', 'format', 'duration']
@@ -18,13 +18,13 @@ export function saveColPrefs(cols: Set<string>): void {
   localStorage.setItem(COLS_KEY, JSON.stringify([...cols]))
 }
 
-export type TagField = 'title' | 'artist' | 'album' | 'album_artist' | 'year' | 'track_number' | 'disc_number' | 'genre' | 'comment' | 'composer' | 'bpm' | 'lyrics'
+export type TagField = 'title' | 'artist' | 'album' | 'album_artist' | 'year' | 'track_number' | 'disc_number' | 'genre' | 'comment' | 'composer' | 'bpm' | 'label' | 'lyrics'
 
 // Text/textarea fields driven by the generic form loop. `compilation` is a
 // boolean checkbox handled separately in populateForm/saveTags.
 export const TAG_FIELDS: TagField[] = [
   'title', 'artist', 'album', 'album_artist', 'year',
-  'track_number', 'disc_number', 'genre', 'comment', 'composer', 'bpm', 'lyrics',
+  'track_number', 'disc_number', 'genre', 'comment', 'composer', 'bpm', 'label', 'lyrics',
 ]
 
 export interface DirNode {
@@ -35,7 +35,7 @@ export interface DirNode {
   expanded: boolean
 }
 
-export type SidebarMode = 'tags' | 'artists' | 'genres' | 'files' | 'quality'
+export type SidebarMode = 'tags' | 'artists' | 'genres' | 'labels' | 'files' | 'quality'
 
 export interface State {
   // sidebar
@@ -54,6 +54,10 @@ export interface State {
   // genres panel
   genres:            Genre[]
   selectedGenre:     string | null
+  // labels panel
+  labels:            Label[]
+  selectedLabel:     string | null
+  labelFilter:       string
   genreFilter:       string
   // files panel
   rootNode:          DirNode | null
@@ -105,6 +109,9 @@ export const state: State = {
   artistDetail:      null,
   genres:            [],
   selectedGenre:     null,
+  labels:            [],
+  selectedLabel:     null,
+  labelFilter:       '',
   genreFilter:       '',
   rootNode:          null,
   selectedDirectory: null,

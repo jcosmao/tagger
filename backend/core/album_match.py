@@ -14,7 +14,7 @@ from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from core.album_years import _UUID, _clean, _lucene, _norm, _year
+from core.album_years import _UUID, _clean, _label_of, _lucene, _norm, _year
 from core.artist_genres import _mb_get
 
 # A pair scoring below this is not proposed; the track is left for a per-track lookup.
@@ -52,7 +52,7 @@ def find_release(artist: str, album: str, track_count: int) -> list[dict]:
 
 def get_release(release_id: str) -> dict:
     """A release with its whole tracklist, flattened to what tagging needs."""
-    rel = _mb_get(f"release/{release_id}", {"inc": "recordings artist-credits release-groups"})
+    rel = _mb_get(f"release/{release_id}", {"inc": "recordings artist-credits release-groups labels"})
     album_artist, album_artist_id = _credit(rel.get("artist-credit"))
     rg = rel.get("release-group") or {}
     tracks = []
@@ -76,6 +76,7 @@ def get_release(release_id: str) -> dict:
         "artist_id": album_artist_id,
         "date": rel.get("date"),
         "country": rel.get("country"),
+        "label": _label_of(rel),
         "year": _year(rg.get("first-release-date")) or _year(rel.get("date")),
         "disc_count": len(rel.get("media", [])),
         "tracks": tracks,
@@ -133,6 +134,7 @@ def match_tracks(local: list[dict], release: dict) -> tuple[list[dict], list[int
                 "album": release["title"],
                 "album_artist": release["artist"],
                 "year": release["year"],
+                "label": release["label"],
                 "track_number": r["track_number"],
                 "disc_number": r["disc_number"],
                 "mb_track_id": r["mb_track_id"],
@@ -170,7 +172,7 @@ def lookup_album(local: list[dict], release_id: str | None = None) -> dict:
 
     release = get_release(release_id)
     matches, unmatched = match_tracks(local, release)
-    summary = {k: release[k] for k in ("id", "title", "artist", "date", "country", "year")}
+    summary = {k: release[k] for k in ("id", "title", "artist", "date", "country", "year", "label")}
     summary["track_count"] = len(release["tracks"])
     return {
         "release": summary,

@@ -1,4 +1,4 @@
-"""Album years: one lookup per album (HTTP mocked), cache, review and apply."""
+"""Album year and label: one lookup per album (HTTP mocked), cache, review and apply."""
 import pytest
 
 import core.album_years as ay
@@ -18,7 +18,8 @@ class FakeMB:
     def __call__(self, path, params):
         self.calls.append(path)
         if path == f"release/{RELEASE}":
-            return {"release-group": {"id": "rg-dsotm", "first-release-date": "1973-03-01"}}
+            return {"release-group": {"id": "rg-dsotm", "first-release-date": "1973-03-01"},
+                    "label-info": [{"label": {}}, {"label": {"name": "Harvest"}}]}
         if path == "release-group":
             if "Nevermind" in params["query"]:
                 return {"release-groups": [
@@ -29,6 +30,12 @@ class FakeMB:
             if "Down" in params["query"]:
                 raise MusicBrainzError("503 Service Unavailable")
             return {"release-groups": []}
+        if path == "release":                        # browse a group's releases for the label
+            return {"releases": [
+                {"date": "2011", "label-info": [{"label": {"name": "Geffen"}}]},
+                {"date": "1991-09-24", "label-info": [{"label": {"name": "DGC"}}]},
+                {"date": "1991", "label-info": []},
+            ]}
         raise AssertionError(path)
 
 
@@ -42,18 +49,21 @@ def mb(monkeypatch):
 
 
 def test_release_id_is_read_directly(mb):
-    assert ay.fetch_year("Pink Floyd", "The Dark Side of the Moon", RELEASE) == \
-        {"year": "1973", "source": "musicbrainz", "mbid": "rg-dsotm", "error": None}
+    assert ay.fetch_album("Pink Floyd", "The Dark Side of the Moon", RELEASE) == \
+        {"year": "1973", "label": "Harvest", "source": "musicbrainz", "mbid": "rg-dsotm", "error": None}
     assert mb.calls == [f"release/{RELEASE}"]
 
 
-def test_search_picks_earliest_same_title_group(mb):
-    assert ay.fetch_year("Nirvana", "Nevermind (Deluxe Edition)", None)["year"] == "1991"
+def test_search_takes_earliest_group_then_its_first_label(mb):
+    out = ay.fetch_album("Nirvana", "Nevermind (Deluxe Edition)", None)
+    assert (out["year"], out["label"]) == ("1991", "DGC")   # not the 2011 reissue's label
+    assert mb.calls == ["release-group", "release"]
 
 
 def test_fallback_and_errors(mb):
-    assert ay.fetch_year("X", "Obscure", None) == {"year": "2001", "source": "itunes", "mbid": None, "error": None}
-    down = ay.fetch_year("X", "Down", None)
+    assert ay.fetch_album("X", "Obscure", None) == \
+        {"year": "2001", "label": None, "source": "itunes", "mbid": None, "error": None}
+    down = ay.fetch_album("X", "Down", None)
     assert down["year"] is None and "MusicBrainz: 503" in down["error"]
 
 
@@ -87,9 +97,10 @@ def test_fetch_review_apply_undo(client, albums, mb):
     assert client.get(f"/api/jobs/{job['job_id']}").json()["scanned"] == 2
 
     by_album = {a["album"]: a for a in client.get("/api/albums/years").json()}
-    assert by_album["The Dark Side of the Moon"]["found_year"] == "1973"
-    assert by_album["The Dark Side of the Moon"]["years"] == {"2011": 2}
-    assert by_album["The Dark Side of the Moon"]["changed"] == 2
+    dsotm = by_album["The Dark Side of the Moon"]
+    assert (dsotm["found_year"], dsotm["found_label"]) == ("1973", "Harvest")
+    assert dsotm["years"] == {"2011": 2} and dsotm["labels"] == {"": 2}
+    assert (dsotm["changed_year"], dsotm["changed_label"]) == (2, 2)
     assert by_album["Nevermind"]["found_year"] == "1991"
 
     # A second fetch only asks about albums not cached yet.
@@ -97,21 +108,29 @@ def test_fetch_review_apply_undo(client, albums, mb):
     client.post("/api/albums/years/fetch", json={})
     assert len(mb.calls) == calls
 
-    directory = by_album["The Dark Side of the Moon"]["directory"]
-    job = client.post("/api/albums/years/apply", json={"directories": [directory]}).json()
+    # Year and label are applied independently.
+    directory = dsotm["directory"]
+    job = client.post("/api/albums/years/apply",
+                      json={"directories": [directory], "fields": ["year"]}).json()
     assert client.get(f"/api/jobs/{job['job_id']}").json()["scanned"] == 2
-    assert read_tags(albums["dsotm1"])["year"] == "1973"
+    tags = read_tags(albums["dsotm1"])
+    assert tags["year"] == "1973" and tags["label"] in (None, "")
     assert read_tags(albums["nevermind1"])["year"] in (None, "")  # not selected
+
+    client.post("/api/albums/years/apply", json={"directories": [directory], "fields": ["label"]})
+    assert read_tags(albums["dsotm1"])["label"] == "Harvest"
+    assert client.post("/api/albums/years/apply",
+                       json={"directories": [directory], "fields": ["bogus"]}).status_code == 400
 
     change = client.get("/api/library/history").json()[0]
     client.post(f"/api/library/history/{change['id']}/undo")
-    assert read_tags(albums["dsotm1"])["year"] == "2011"
+    assert read_tags(albums["dsotm1"])["label"] in (None, "")
 
 
 def test_failed_albums_are_retried(client, albums, mb):
     with db() as conn:
         for a in ay.library_albums(conn):
-            ay.store(conn, a["key"], {"year": None, "source": None, "mbid": None, "error": "boom"})
+            ay.store(conn, a["key"], {"year": None, "label": None, "source": None, "mbid": None, "error": "boom"})
     client.post("/api/albums/years/fetch", json={})
     assert {a["found_year"] for a in client.get("/api/albums/years").json()} == {"1973", "1991"}
 
@@ -119,11 +138,11 @@ def test_failed_albums_are_retried(client, albums, mb):
 def test_discogs_matches_title_and_artist(monkeypatch):
     monkeypatch.setattr(ay, "_pace_fallback", lambda: None)
     monkeypatch.setattr(ay, "_get_json", lambda url: {"results": [
-        {"title": "Air (2) - Moon Safari", "year": 1998},
-        {"title": "Air - Moon Safari (Remixes)", "year": 1999},
-        {"title": "Someone - Moon Safari", "year": 1990},
+        {"title": "Air (2) - Moon Safari", "year": 1998, "label": ["Source", "Virgin"]},
+        {"title": "Air - Moon Safari (Remixes)", "year": 1999, "label": ["Virgin"]},
+        {"title": "Someone - Moon Safari", "year": 1990, "label": ["Other"]},
     ]})
-    assert ay.discogs_year("Air", "Moon Safari", "tok") == "1998"
+    assert ay.discogs_album("Air", "Moon Safari", "tok") == ("1998", "Source")
 
 
 def test_itunes_errors_propagate(monkeypatch):
@@ -133,3 +152,20 @@ def test_itunes_errors_propagate(monkeypatch):
     monkeypatch.setattr(ay, "_get_json", boom)
     with pytest.raises(ProviderError):
         ay.itunes_year("A", "B")
+
+
+def test_label_listing_and_filter(client, albums):
+    with db() as conn:
+        conn.execute("UPDATE tracks SET label = 'Harvest' WHERE directory LIKE '%dsotm'")
+        conn.execute("UPDATE tracks SET label = 'DGC' WHERE directory LIKE '%nevermind' AND filename = '1.mp3'")
+
+    assert client.get("/api/library/labels").json() == [
+        {"label": "", "track_count": 1},
+        {"label": "DGC", "track_count": 1},
+        {"label": "Harvest", "track_count": 2},
+    ]
+    tracks = client.get("/api/library/tracks", params={"label": "harvest"}).json()
+    assert tracks["total"] == 2                                   # case-insensitive
+    assert client.get("/api/library/tracks", params={"label": ""}).json()["total"] == 1
+    assert len(client.get("/api/library/track-ids", params={"label": "DGC"}).json()) == 1
+    assert client.get("/api/library/search", params={"q": "label = 'Harvest'"}).json()["total"] == 2

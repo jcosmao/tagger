@@ -12,6 +12,7 @@ from typing import Any
 import mutagen
 from mutagen.easyid3 import EasyID3
 from mutagen.easymp4 import EasyMP4
+from mutagen.mp4 import AtomDataType, MP4FreeForm
 
 from core.genres import join_genres, split_genres
 
@@ -22,6 +23,19 @@ for _key, _atom in (("composer", "\xa9wrt"),):
         EasyMP4.RegisterTextKey(_key, _atom)
 if "bpm" not in EasyMP4.Get:
     EasyMP4.RegisterIntKey("bpm", "tmpo")
+
+# Record label: TPUB on ID3, LABEL on Vorbis (both handled by Easy*), and the
+# freeform atom Picard uses on MP4, which needs UTF-8 bytes of its own.
+EasyID3.RegisterTextKey("label", "TPUB")
+_MP4_LABEL = "----:com.apple.iTunes:LABEL"
+if "label" not in EasyMP4.Get:
+    EasyMP4.RegisterKey(
+        "label",
+        lambda tags, key: [v.decode("utf-8", "replace") for v in tags.get(_MP4_LABEL, [])],
+        lambda tags, key, value: tags.__setitem__(
+            _MP4_LABEL, [MP4FreeForm(v.encode("utf-8"), AtomDataType.UTF8) for v in value]),
+        lambda tags, key: tags.__delitem__(_MP4_LABEL),
+    )
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".oga"}
 
@@ -38,6 +52,7 @@ _TO_EASY: dict[str, str] = {
     "comment": "comment",
     "composer": "composer",
     "bpm": "bpm",
+    "label": "label",
 }
 
 _FROM_EASY: dict[str, str] = {v: k for k, v in _TO_EASY.items()}

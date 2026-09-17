@@ -40,9 +40,12 @@ def _migrate(conn) -> None:
         ("bpm", "TEXT"),
         ("lyrics", "TEXT"),
         ("compilation", "TEXT"),
+        ("label", "TEXT"),
     ):
         if col not in have:
             conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} {decl}")
+    if "label" not in {r[1] for r in conn.execute("PRAGMA table_info(album_years)")}:
+        conn.execute("ALTER TABLE album_years ADD COLUMN label TEXT")
     if "source" not in {r[1] for r in conn.execute("PRAGMA table_info(artist_genres)")}:
         conn.execute("ALTER TABLE artist_genres ADD COLUMN source TEXT")
     if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(scan_jobs)")}:
@@ -91,6 +94,7 @@ def init_db() -> None:
                 bpm                TEXT,
                 lyrics             TEXT,
                 compilation        TEXT,
+                label              TEXT,
                 mb_track_id        TEXT,
                 mb_artist_id       TEXT,
                 mb_album_id        TEXT,
@@ -160,6 +164,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS album_years (
                 key        TEXT PRIMARY KEY,   -- "mb:<release id>", else casefolded artist + album
                 year       TEXT,               -- original release year, NULL when not found
+                label      TEXT,               -- record label of the original release
                 source     TEXT,               -- musicbrainz | discogs | itunes
                 mbid       TEXT,               -- MusicBrainz release group
                 error      TEXT,

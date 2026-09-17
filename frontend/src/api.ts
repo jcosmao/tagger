@@ -25,6 +25,7 @@ export interface Track {
   bpm: string | null
   lyrics: string | null
   compilation: string | null
+  label: string | null
   mb_track_id: string | null
   mb_artist_id: string | null
   mb_album_id: string | null
@@ -45,6 +46,11 @@ export interface Artist {
 
 export interface Genre {
   genre: string        // "" = tracks without a genre
+  track_count: number
+}
+
+export interface Label {
+  label: string        // "" = tracks without a label
   track_count: number
 }
 
@@ -133,6 +139,7 @@ export interface TagUpdate {
   bpm?: string | null
   lyrics?: string | null
   compilation?: string | null
+  label?: string | null
   mb_track_id?: string | null
   mb_artist_id?: string | null
   mb_album_id?: string | null
@@ -145,6 +152,7 @@ export interface LookupResult {
   album: string | null
   album_artist: string | null
   year: string | null
+  label: string | null
   track_number: string | null
   disc_number: string | null
   mb_track_id: string | null
@@ -156,7 +164,7 @@ export interface LookupResult {
 }
 
 export interface AlbumLookup {
-  release: { id: string; title: string; artist: string | null; date: string | null; country: string | null; year: string | null; track_count: number } | null
+  release: { id: string; title: string; artist: string | null; date: string | null; country: string | null; year: string | null; label: string | null; track_count: number } | null
   candidates: { id: string; title: string; date: string | null; country: string | null; track_count: number | null; status: string | null }[]
   matches: { track_id: number; score: number; update: Partial<Record<keyof LookupResult, string>> }[]
   unmatched: number[]
@@ -183,7 +191,7 @@ export interface IssueCount {
   inconsistent_albums: number
 }
 
-export type UnifyField = 'genre' | 'year' | 'album' | 'album_artist' | 'compilation'
+export type UnifyField = 'genre' | 'year' | 'album' | 'album_artist' | 'compilation' | 'label'
 
 export interface AlbumInconsistency {
   directory: string
@@ -193,6 +201,8 @@ export interface AlbumInconsistency {
   changes: Partial<Record<UnifyField, { before: Record<string, number>; after: string; changed: number }>>
 }
 
+export type AlbumField = 'year' | 'label'
+
 export interface AlbumYear {
   directory: string
   artist: string
@@ -200,10 +210,14 @@ export interface AlbumYear {
   mb_album_id: string | null
   track_count: number
   years: Record<string, number>
+  labels: Record<string, number>
   fetched: boolean
   found_year: string | null
+  found_label: string | null
   source: 'musicbrainz' | 'discogs' | 'itunes' | null
   error: string | null
+  changed_year: number
+  changed_label: number
   changed: number
 }
 
@@ -270,6 +284,7 @@ export const api = {
     deleteFiles: (ids: number[]) => request<{ deleted: number }>('POST', '/api/library/delete-files', ids),
     artists: () => request<Artist[]>('GET', '/api/library/artists'),
     genres: () => request<Genre[]>('GET', '/api/library/genres'),
+    labels: () => request<Label[]>('GET', '/api/library/labels'),
     trackIds: (params: Record<string, string | number> = {}) => {
       const qs = new URLSearchParams(params as Record<string, string>).toString()
       return request<number[]>('GET', `/api/library/track-ids${qs ? '?' + qs : ''}`)
@@ -328,8 +343,8 @@ export const api = {
     years: () => request<AlbumYear[]>('GET', '/api/albums/years'),
     fetchYears: (refresh = false) =>
       request<{ job_id: string }>('POST', '/api/albums/years/fetch', { refresh }),
-    applyYears: (directories: string[]) =>
-      request<{ job_id: string }>('POST', '/api/albums/years/apply', { directories }),
+    applyYears: (directories: string[], fields: AlbumField[]) =>
+      request<{ job_id: string }>('POST', '/api/albums/years/apply', { directories, fields }),
   },
 
   jobs: {

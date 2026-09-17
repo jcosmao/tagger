@@ -4,7 +4,7 @@ export const APP_HTML = `
     <span class="logo">Tagger</span>
     <div class="search-wrap">
       <input id="search" class="search-input" type="search" placeholder="Search tracks… or year >= 2000 AND genre = 'Rock'" aria-label="Search tracks" autocomplete="off"
-        title="Plain words: full-text search.&#10;Advanced (SQL-like): field op value, combined with AND / OR / NOT and parentheses.&#10;Operators: = != < <= > >= LIKE, IN (…), BETWEEN … AND …, IS [NOT] NULL&#10;Fields: title artist album album_artist genre year track disc bpm composer comment format bitrate sample_rate duration size path filename directory …&#10;Optional: ORDER BY year DESC, title&#10;Example: year >= 2000 AND year < 2010 AND artist LIKE 'The %'" />
+        title="Plain words: full-text search.&#10;Advanced (SQL-like): field op value, combined with AND / OR / NOT and parentheses.&#10;Operators: = != < <= > >= LIKE, IN (…), BETWEEN … AND …, IS [NOT] NULL&#10;Fields: title artist album album_artist genre year track disc bpm composer comment label format bitrate sample_rate duration size path filename directory …&#10;Optional: ORDER BY year DESC, title&#10;Example: year >= 2000 AND year < 2010 AND artist LIKE 'The %'" />
       <div id="search-error" class="search-error" role="alert" hidden></div>
     </div>
     <div class="topbar-actions">
@@ -72,6 +72,7 @@ export const APP_HTML = `
           <label class="settings-toggle"><input type="checkbox" data-tag="comment" /><span>Comment</span></label>
           <label class="settings-toggle"><input type="checkbox" data-tag="composer" /><span>Composer</span></label>
           <label class="settings-toggle"><input type="checkbox" data-tag="bpm" /><span>BPM</span></label>
+          <label class="settings-toggle"><input type="checkbox" data-tag="label" /><span>Label</span></label>
           <label class="settings-toggle"><input type="checkbox" data-tag="lyrics" /><span>Lyrics</span></label>
           <label class="settings-toggle"><input type="checkbox" data-tag="compilation" /><span>Compilation</span></label>
         </div>
@@ -123,6 +124,7 @@ export const APP_HTML = `
         <button class="stab active" data-mode="tags" title="Grouped by the artist tag">Artist</button>
         <button class="stab" data-mode="artists" title="Grouped by album artist (else artist), with MusicBrainz genres (Discogs/iTunes as fallback)">Album Artist</button>
         <button class="stab" data-mode="genres">Genres</button>
+        <button class="stab" data-mode="labels" title="Grouped by record label">Labels</button>
         <button class="stab" data-mode="files">Files</button>
         <button class="stab" data-mode="quality">Quality</button>
       </div>
@@ -147,6 +149,12 @@ export const APP_HTML = `
         </div>
         <ul id="genre-list" class="nav-list"></ul>
         <datalist id="genre-options"></datalist>
+      </nav>
+      <nav id="panel-labels" class="sidebar-panel" hidden>
+        <div class="nav-toolbar">
+          <input id="label-filter" class="nav-filter" type="search" placeholder="Filter labels…" autocomplete="off" />
+        </div>
+        <ul id="label-list" class="nav-list"></ul>
       </nav>
       <nav id="panel-files" class="sidebar-panel" hidden>
         <div class="nav-toolbar">
@@ -282,6 +290,7 @@ export const APP_HTML = `
         </label>
         <label class="field-label">Composer<input name="composer" type="text" /></label>
         <label class="field-label">BPM<input name="bpm" type="text" inputmode="numeric" /></label>
+        <label class="field-label">Label<input name="label" type="text" /></label>
         <label class="field-check"><input name="compilation" type="checkbox" /><span>Part of a compilation</span></label>
         <label class="field-label">Comment<textarea name="comment" rows="3"></textarea></label>
         <label class="field-label">Lyrics<textarea name="lyrics" rows="4"></textarea></label>

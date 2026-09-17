@@ -23,7 +23,7 @@ class QueryError(ValueError):
 _COLUMNS = {
     "title": "text", "artist": "text", "album": "text", "album_artist": "text",
     "genre": "text", "comment": "text", "composer": "text", "lyrics": "text",
-    "compilation": "text", "path": "text", "filename": "text", "directory": "text",
+    "compilation": "text", "label": "text", "path": "text", "filename": "text", "directory": "text",
     "format": "text", "mb_track_id": "text", "mb_artist_id": "text",
     "mb_album_id": "text", "mb_album_artist_id": "text",
     "year": "numtext", "track_number": "numtext", "disc_number": "numtext", "bpm": "numtext",
@@ -34,7 +34,7 @@ _ALIASES = {
     "albumartist": "album_artist", "date": "year", "track": "track_number",
     "tracknumber": "track_number", "disc": "disc_number", "discnumber": "disc_number",
     "samplerate": "sample_rate", "dir": "directory", "folder": "directory",
-    "file": "filename", "ext": "format",
+    "file": "filename", "ext": "format", "publisher": "label",
 }
 FIELDS = sorted({*_COLUMNS, *_ALIASES})
 

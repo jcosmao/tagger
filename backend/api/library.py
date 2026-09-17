@@ -56,6 +56,7 @@ def _track_filters(
     issue: Optional[str],
     genre: Optional[str] = None,
     artist_key: Optional[str] = None,
+    label: Optional[str] = None,
 ) -> tuple[str, list, str]:
     """Build the shared WHERE clause + ORDER BY used by listing and export."""
     clauses, params = [], []
@@ -69,6 +70,12 @@ def _track_filters(
             # Genres are stored as "A; B"; pad both sides for an exact match.
             clauses.append("instr('; ' || genre || '; ', ?) > 0")
             params.append(f"; {genre}; ")
+    if label is not None:
+        if label == "":
+            clauses.append("(label IS NULL OR label = '')")
+        else:
+            clauses.append("label = ? COLLATE NOCASE")
+            params.append(label)
     if directory:
         clauses.append("(directory = ? OR substr(directory, 1, ?) = ?)")
         params.extend([directory, len(directory) + 1, directory + "/"])
@@ -266,10 +273,11 @@ def list_tracks(
     issue: Optional[str] = None,
     genre: Optional[str] = None,
     artist_key: Optional[str] = None,
+    label: Optional[str] = None,
     limit: int = Query(100, le=500),
     offset: int = 0,
 ):
-    where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
+    where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key, label)
 
     with db() as conn:
         rows = conn.execute(
@@ -304,6 +312,7 @@ def export_m3u(
     issue: Optional[str] = None,
     genre: Optional[str] = None,
     artist_key: Optional[str] = None,
+    label: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(10000, le=100000),
 ):
@@ -315,7 +324,7 @@ def export_m3u(
                 f"SELECT t.* FROM {source} {order} LIMIT ?", [*params, limit]
             ).fetchall()
         else:
-            where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
+            where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key, label)
             rows = conn.execute(
                 f"SELECT * FROM tracks {where} {order} LIMIT ?", [*params, limit]
             ).fetchall()
@@ -387,6 +396,7 @@ def list_track_ids(
     issue: Optional[str] = None,
     genre: Optional[str] = None,
     artist_key: Optional[str] = None,
+    label: Optional[str] = None,
     q: Optional[str] = None,
 ):
     """Every track id matching a view (same filters as /tracks, or a search)."""
@@ -395,7 +405,7 @@ def list_track_ids(
             source, params, order = _search_sql(q)
             rows = conn.execute(f"SELECT t.id FROM {source} {order}", params).fetchall()
         else:
-            where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key)
+            where, params, order = _track_filters(directory, artist, album, issue, genre, artist_key, label)
             rows = conn.execute(f"SELECT id FROM tracks {where} {order}", params).fetchall()
     return [r[0] for r in rows]
 
@@ -415,6 +425,18 @@ def list_genres():
         {"genre": g, "track_count": n}
         for g, n in sorted(counts.items(), key=lambda kv: (kv[0].casefold(), kv[0]))
     ]
+
+
+@router.get("/labels")
+def list_labels():
+    """Distinct record labels with track counts; "" counts tracks without one."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(label, '') AS label, COUNT(*) AS track_count FROM tracks "
+            "GROUP BY COALESCE(label, '') COLLATE NOCASE "
+            "ORDER BY 1 COLLATE NOCASE"
+        ).fetchall()
+    return [_row(r) for r in rows]
 
 
 @router.get("/artists")

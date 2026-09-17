@@ -21,6 +21,7 @@ export const COL_DEFS: ColDef[] = [
   { key: 'genre',        label: 'Genre',        cls: 'col-genre',  render: t => esc(t.genre || '') },
   { key: 'composer',     label: 'Composer',     cls: 'col-composer', render: t => esc(t.composer || '') },
   { key: 'bpm',          label: 'BPM',          cls: 'col-bpm',    render: t => esc(t.bpm || '') },
+  { key: 'label',        label: 'Label',        cls: 'col-label',  render: t => esc(t.label || '') },
   { key: 'format',       label: 'Format',       cls: 'col-format', render: t => t.format.toUpperCase() },
   { key: 'bitrate',      label: 'Bitrate',      cls: 'col-bitrate', render: t => fmtBitrate(t.bitrate) },
   { key: 'sample_rate',  label: 'Sample Rate',  cls: 'col-srate',  render: t => fmtSampleRate(t.sample_rate) },
