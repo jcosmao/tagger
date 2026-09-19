@@ -348,9 +348,14 @@ export const api = {
   },
 
   jobs: {
-    startScan: (directory?: string) =>
-      request<{ job_id: string; directory: string | null }>(
-        'POST', `/api/jobs/scan${directory ? '?directory=' + encodeURIComponent(directory) : ''}`),
+    startScan: (directory?: string, force?: boolean) => {
+      const params = new URLSearchParams()
+      if (directory) params.set('directory', directory)
+      if (force) params.set('force', 'true')
+      const qs = params.toString()
+      return request<{ job_id: string; directory: string | null; force: boolean }>(
+        'POST', `/api/jobs/scan${qs ? '?' + qs : ''}`)
+    },
     list: () => request<ScanJob[]>('GET', '/api/jobs'),
     get: (jobId: string) => request<ScanJob>('GET', `/api/jobs/${jobId}`),
   },

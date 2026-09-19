@@ -45,6 +45,7 @@ def scan_library(
     prune_under: list[str] | None = None,
     exclude: list[str] | None = None,
     genre_separators: list[str] | None = None,
+    force: bool = False,
 ) -> tuple[int, int]:
     """
     Scan the music directories and upsert changed/new tracks into the DB.
@@ -53,6 +54,13 @@ def scan_library(
     under those roots are removed for missing files (used by a targeted rescan
     so it doesn't wipe tracks outside the scanned folder). When None, every
     missing file is pruned (a full-library scan).
+
+    `force` re-reads every file's tags regardless of mtime. A field an
+    earlier version of the scanner didn't capture (or one written by a tool
+    that restores the original mtime after writing, e.g. Navidrome/SoulSync)
+    otherwise stays stuck at its last-known value forever: the file's mtime
+    already matches the DB row from the write that produced it, so the
+    normal change check never sees a reason to re-read.
 
     Returns (total_found, upserted).
     """
@@ -97,7 +105,7 @@ def scan_library(
                 stat = os.stat(fpath)
                 mtime = stat.st_mtime
 
-                if existing.get(fpath) != mtime:
+                if force or existing.get(fpath) != mtime:
                     want_extended = scan_tags is None or "lyrics" in scan_tags or "compilation" in scan_tags
                     tags = read_tags(fpath, extended=want_extended,
                                      genre_separators=genre_separators)

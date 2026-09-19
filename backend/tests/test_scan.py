@@ -66,12 +66,53 @@ def test_targeted_scan_rejects_outside_dir(client):
     assert r.status_code == 403
 
 
+def test_scan_accepts_force_param(client):
+    r = client.post("/api/jobs/scan", params={"force": "true"})
+    assert r.status_code == 200
+    assert r.json()["force"] is True
+
+
 def test_excluded_matching():
     assert _excluded("/m/a/song.mp3", ["*.mp3"]) is True
     assert _excluded("/m/a/song.flac", ["*.mp3"]) is False
     assert _excluded("/m/Podcasts/x.mp3", ["*Podcasts*"]) is True
     assert _excluded("/m/a/._hidden.mp3", ["._*"]) is True     # basename match
     assert _excluded("/m/a/song.mp3", []) is False
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")
+def test_force_rereads_files_whose_mtime_already_matches(temp_db, tmp_path):
+    """A DB row whose mtime already matches the file's (an earlier scanner
+    version that skipped a field, or a tool that restores mtime after
+    writing) never gets re-read by a normal scan, no matter how many times
+    it runs. `force=True` is the only way to fix it without touching the
+    file (which would just make it stale again after the next such write)."""
+    root = tmp_path / "music"
+    root.mkdir()
+    f = root / "1.mp3"
+    subprocess.run(
+        [FFMPEG, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0.3",
+         "-c:a", "libmp3lame", "-y", str(f)],
+        check=True, capture_output=True,
+    )
+    scan_library(music_dirs=[str(root)])
+    assert _count("WHERE title IS NOT NULL") == 0  # untagged source file
+
+    # Simulate a DB row that's out of sync with the file's real tags but
+    # whose recorded mtime still matches the file's current mtime exactly
+    # (what a partial/older write leaves behind).
+    real_mtime = f.stat().st_mtime
+    with db() as conn:
+        conn.execute(
+            "UPDATE tracks SET title = 'stale', mtime = ? WHERE path = ?",
+            (real_mtime, str(f)),
+        )
+
+    scan_library(music_dirs=[str(root)])
+    assert _count("WHERE title = 'stale'") == 1  # unchanged: mtime looked current
+
+    scan_library(music_dirs=[str(root)], force=True)
+    assert _count("WHERE title = 'stale'") == 0  # force bypassed the mtime check
 
 
 @pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")

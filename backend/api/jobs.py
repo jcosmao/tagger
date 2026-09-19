@@ -21,7 +21,16 @@ def _under_music_dir(directory: str) -> bool:
 
 
 @router.post("/scan")
-async def start_scan(background_tasks: BackgroundTasks, directory: Optional[str] = Query(None)):
+async def start_scan(
+    background_tasks: BackgroundTasks,
+    directory: Optional[str] = Query(None),
+    force: bool = Query(False, description=(
+        "Re-read every file's tags regardless of mtime. Without this, a file "
+        "whose mtime already matches its DB row (e.g. a field the scanner "
+        "didn't capture on an earlier version, or a tag written by another "
+        "tool that restores the original mtime) stays stale forever."
+    )),
+):
     """Start a full scan, or a targeted rescan of `directory` (must be under a music dir)."""
     running = active_job()
     if running:
@@ -35,8 +44,8 @@ async def start_scan(background_tasks: BackgroundTasks, directory: Optional[str]
             raise HTTPException(404, "Directory not found")
 
     job_id = create_scan_job()
-    background_tasks.add_task(run_scan_job, job_id, directory)
-    return {"job_id": job_id, "directory": directory}
+    background_tasks.add_task(run_scan_job, job_id, directory, force)
+    return {"job_id": job_id, "directory": directory, "force": force}
 
 
 @router.get("")

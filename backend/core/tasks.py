@@ -114,12 +114,13 @@ async def auto_scan_loop() -> None:
                 pass
 
 
-async def run_scan_job(job_id: str, directory: str | None = None) -> None:
+async def run_scan_job(job_id: str, directory: str | None = None, force: bool = False) -> None:
     """
     Run a library scan as a background task, updating job status in DB.
 
     With `directory`, only that subtree is scanned and pruned; otherwise the
-    full set of configured music directories is scanned.
+    full set of configured music directories is scanned. `force` re-reads
+    every file's tags regardless of mtime (see scan_library's docstring).
     """
     from core.scanner import scan_library
     from api.config import _load as load_app_settings, get_music_dirs
@@ -143,6 +144,7 @@ async def run_scan_job(job_id: str, directory: str | None = None) -> None:
         total, upserted = await asyncio.to_thread(
             scan_library, progress, app_settings.scan_tags, music_dirs,
             prune_under, app_settings.scan_exclude, app_settings.genre_separators,
+            force,
         )
         _update_job(
             job_id,
